@@ -1,0 +1,23 @@
+ - collapsed
+double_ramp_0.049_0.0636_ma_2.511_pres_193365_interpolated_arrays_density
+double_ramp_0.0393_0.0522_ma_3.745_pres_102521_interpolated_arrays_density
+double_ramp_0.0408_0.0554_ma_6.282_pres_196000_interpolated_arrays_density
+double_ramp_0.0486_0.0539_ma_4.722_pres_170244_interpolated_arrays_density
+double_ramp_0.0498_0.0543_ma_6.46_pres_133296_interpolated_arrays_density
+
+- shorter domain
+double_ramp_0.0193_0.0016_ma_7.905_pres_164290_interpolated_arrays_density 
+double_ramp_0.0236_0.0015_ma_4.656_pres_109333_interpolated_arrays_density
+double_ramp_0.0316_0.0008_ma_4.216_pres_127671_interpolated_arrays_density
+double_ramp_0.0355_0.0038_ma_2.47_pres_192155_interpolated_arrays_density
+double_ramp_0.0401_0.0003_ma_3.944_pres_118120_interpolated_arrays_density
+
+
+vol2=
+
+- bad mesh section
+double_ramp_0.026_0.0216_ma_4.406_pres_156295_interpolated_arrays_density.msh
+double_ramp_0.0132_0.0151_ma_2.627_pres_155884_interpolated_arrays_density.msh
+
+- point mismatch
+double_ramp_0.0104_0.0107_ma_2.679_pres_120267_interpolated_arrays_density.msh
