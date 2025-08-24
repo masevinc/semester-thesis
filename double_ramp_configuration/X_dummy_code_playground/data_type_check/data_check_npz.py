@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 # plt.axis('off')  # Hide axes
 # plt.savefig('./double_ramp_configuration/cv_playground/density_plot.png', dpi=100, bbox_inches='tight', pad_inches=0)  # Save before showing 
 # plt.show()
-data_n = 'double_ramp_0.0105_0.0232_ma_7.125_pres_91820_interpolated_arrays'
+data_n = 'double_ramp_0.0304_0.0306_ma_2.303_pres_186713_interpolated_arrays'
 data = np.load('./double_ramp_configuration/inputs/double_ramp_npz_files_clamped/'+data_n+'.npz')
 
 density = data['density']

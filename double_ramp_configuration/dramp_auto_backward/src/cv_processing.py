@@ -155,20 +155,50 @@ def process_image_from_array(image_array, physical_domain_height=1.0):
         contour_set = {tuple(pt) for pt in contour_points}
         existing_set = {tuple(pt) for pt in existing_points}
         candidates = list(contour_set - existing_set)
+
+        # Enforce a minimum separation so we don't add a point like (511, 0) that is
+        # effectively a duplicate of an already chosen corner and degrades the logic.
+        # For 512x512 domain: diag ≈ 724. Tune thresholds to balance coverage & mesh quality.
+        bbox_min = np.min(contour_points, axis=0)
+        bbox_max = np.max(contour_points, axis=0)
+        bbox_diag = np.linalg.norm(bbox_max - bbox_min)
+        # Dynamic part plus floor: raise floor for stability.
+        base_min_sep = 8.0  # ~6% of 512, prevents very tight clustering
+        dynamic_min_sep = 0.07 * bbox_diag  # ~50 px for 512^2 domain
+        min_separation = max(base_min_sep, dynamic_min_sep)
+
+        # Additional guard: block adding any new point whose x is within a tiny tolerance
+        # of an existing point's x (we only care about x clustering for mesh quality).
+        x_dup_tol = 3  # pixels tolerance in x (adjust if needed)
+        def x_too_close(pt, pts):
+            return any(abs(pt[0] - p[0]) <= x_dup_tol for p in pts)
+
+        # Initial pruning of candidates too close overall OR too close in x
+        def far_enough(pt, pts):
+            return all(np.linalg.norm(np.array(pt) - np.array(p)) >= min_separation for p in pts)
+
+        candidates = [c for c in candidates if far_enough(c, existing_points) and not x_too_close(c, existing_points)]
+
         while len(existing_points) < desired_num_points and candidates:
-            # Pick candidate farthest from existing points
             best_candidate = None
-            max_min_dist = -1
+            max_min_dist = -1.0
             for cand in candidates:
+                if x_too_close(cand, existing_points):
+                    continue
                 dists = [np.linalg.norm(np.array(cand) - np.array(ep)) for ep in existing_points]
                 min_dist = min(dists)
+                if min_dist < min_separation:
+                    continue
                 if min_dist > max_min_dist:
                     max_min_dist = min_dist
                     best_candidate = cand
-            if best_candidate:
-                existing_points.append(list(best_candidate))
-                candidates.remove(best_candidate)
-
+            if best_candidate is None:
+                # No candidate satisfies requirements; stop trying to add more
+                break
+            existing_points.append(list(best_candidate))
+            # Remove chosen candidate and re-prune remaining list with updated constraints
+            candidates.remove(best_candidate)
+            candidates = [c for c in candidates if far_enough(c, existing_points) and not x_too_close(c, existing_points)]
     # Truncate if more than 6
     elif len(existing_points) > desired_num_points:
         # Greedy farthest point sampling (FPS) to keep the most spatially distinct 6

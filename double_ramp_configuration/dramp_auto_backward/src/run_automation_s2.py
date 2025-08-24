@@ -12,7 +12,7 @@ import os
 import csv
 import numpy as np
 import shutil
-from src.mesh_generator import generate_mesh_from_points
+from src.mesh_generator import generate_mesh_from_points, generate_mesh_from_points_8pnt, generate_mesh_from_points_10pnt
 from src.sweep_calculations_bw import generate_sweeps_for_mesh_folder
 
 def clear_output_directory(directory):
@@ -68,8 +68,9 @@ def main(
             points = np.load(full_path)
 
             print(f"Processing file: {fname}")
-            if len(points) != expected_num_points:
-                msg = f"expected {expected_num_points} points, got {len(points)}"
+            num_points = len(points)
+            if num_points not in (expected_num_points, 8, 10):
+                msg = f"expected {expected_num_points} or 8 points, got {num_points}"
                 writer.writerow([fname, msg])
                 continue
 
@@ -77,7 +78,12 @@ def main(
             mesh_out = os.path.join(mesh_dir, f"{base_name}.msh")
 
             try:
-                generate_mesh_from_points(points, mesh_out, show_gui=False)
+                if num_points == expected_num_points:
+                    generate_mesh_from_points(points, mesh_out, show_gui=False)
+                elif num_points == 8:  # 8-point variant
+                    generate_mesh_from_points_8pnt(points, mesh_out, show_gui=False)
+                elif num_points == 10:  # 10-point variant
+                    generate_mesh_from_points_10pnt(points, mesh_out, show_gui=False)
                 print(f"  Mesh saved to {mesh_out}")
             except Exception as e:
                 msg = str(e)

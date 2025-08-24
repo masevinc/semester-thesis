@@ -4,7 +4,7 @@ from src.run_automation_s2 import main
 extract_points_batch(
     data_dir="./double_ramp_configuration/inputs/double_ramp_npz_files_clamped",
     output_dir="./double_ramp_configuration/outputs/backward/extracted_points",
-    filters={"ramp1": 0.046, "ramp2": None, "min_ma": None, "max_ma": None},   # Filter the chunky data, IF run all = make all None
+    filters={"ramp1": None, "ramp2": None, "min_ma": None, "max_ma": None},   # Filter the chunky data, IF run all = make all None
     selected_keys=["density"], # Focused parameter for computer vision part
     physical_height=256,
     clear_output_before_run=True

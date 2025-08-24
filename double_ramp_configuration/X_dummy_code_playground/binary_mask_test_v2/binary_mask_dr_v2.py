@@ -4,7 +4,9 @@ MAIN DUMMY CODE FOR CV
 
 import cv2
 import numpy as np
+import sys
 import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'main_code')))
 from point_reorder_gmsh import sort_points
 import matplotlib.pyplot as plt
 
