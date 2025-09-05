@@ -9,9 +9,20 @@ mesh_generator.py
 import gmsh
 from src.point_transfer import generate_gmsh_point_code  # Must return GMSH Python API lines
 
+def _prepare_output(mesh_output_path, mesh_format=None):
+    # Determine format
+    if mesh_format is None:
+        # infer from extension
+        ext = mesh_output_path.split('.')[-1].lower()
+        mesh_format = ext  # e.g. msh or su2 or cgns
+    if mesh_format == 'msh':
+        gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+    gmsh.option.setNumber("Mesh.SaveAll", 1)
+    return mesh_format
+
 # 12 points expected for double ramp
 
-def generate_mesh_from_points(points, mesh_output_path, show_gui=False):
+def generate_mesh_from_points(points, mesh_output_path, show_gui=False, mesh_format=None):
     gmsh.initialize()
     gmsh.model.add("double_ramp_python")
 
@@ -75,8 +86,7 @@ def generate_mesh_from_points(points, mesh_output_path, show_gui=False):
 
     # Generate mesh
     gmsh.model.mesh.generate(2)
-    gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-    gmsh.option.setNumber("Mesh.SaveAll", 1)
+    _prepare_output(mesh_output_path, mesh_format)
     gmsh.write(mesh_output_path)
 
     if show_gui:
@@ -86,7 +96,7 @@ def generate_mesh_from_points(points, mesh_output_path, show_gui=False):
 
 # 8 points expected for single ramp
 
-def generate_mesh_from_points_8pnt(points, mesh_output_path, show_gui=False):
+def generate_mesh_from_points_8pnt(points, mesh_output_path, show_gui=False, mesh_format=None):
     gmsh.initialize()
     gmsh.model.add("8pnt_ramp_python")
 
@@ -141,8 +151,7 @@ def generate_mesh_from_points_8pnt(points, mesh_output_path, show_gui=False):
 
     # Generate mesh
     gmsh.model.mesh.generate(2)
-    gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-    gmsh.option.setNumber("Mesh.SaveAll", 1)
+    _prepare_output(mesh_output_path, mesh_format)
     gmsh.write(mesh_output_path)
 
     if show_gui:
@@ -151,7 +160,7 @@ def generate_mesh_from_points_8pnt(points, mesh_output_path, show_gui=False):
     gmsh.finalize()
     
     
-def generate_mesh_from_points_10pnt(points, mesh_output_path, show_gui=False):
+def generate_mesh_from_points_10pnt(points, mesh_output_path, show_gui=False, mesh_format=None):
     gmsh.initialize()
     gmsh.model.add("10pnt_ramp_python")
 
@@ -211,8 +220,7 @@ def generate_mesh_from_points_10pnt(points, mesh_output_path, show_gui=False):
 
     # Generate mesh
     gmsh.model.mesh.generate(2)
-    gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-    gmsh.option.setNumber("Mesh.SaveAll", 1)
+    _prepare_output(mesh_output_path, mesh_format)
     gmsh.write(mesh_output_path)
 
     if show_gui:
