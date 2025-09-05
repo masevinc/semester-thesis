@@ -47,14 +47,20 @@ def main(
     sweep_slurm_ntasks=4,
     sweep_module_load="module load su2/4.1.0",
     sweep_clear_output_before_run=True,
-    sweep_write_master_slurm_script=True
+    sweep_write_master_slurm_script=True,
+    mesh_format="msh"
 ):
+    """Generate meshes from extracted point files.
+
+    Parameters
+    ----------
+    mesh_format : str {'msh','su2','cgns'} default 'msh'
+        Determines output mesh file extension.
     """
-    Main routine to generate mesh files from extracted points and log errors.
-    Optionally runs sweep calculations for all meshes.
-    """
+    mesh_format = mesh_format.lstrip('.')  # allow user to pass with or without dot
     clear_output_directory(mesh_dir)
     os.makedirs(mesh_dir, exist_ok=True)
+    print(f"Mesh generation: output format = {mesh_format}")
 
     with open(error_log, mode='w', newline='') as errfile:
         writer = csv.writer(errfile)
@@ -75,15 +81,15 @@ def main(
                 continue
 
             base_name = os.path.splitext(fname)[0]
-            mesh_out = os.path.join(mesh_dir, f"{base_name}.msh")
+            mesh_out = os.path.join(mesh_dir, f"{base_name}.{mesh_format}")
 
             try:
                 if num_points == expected_num_points:
-                    generate_mesh_from_points(points, mesh_out, show_gui=False)
+                    generate_mesh_from_points(points, mesh_out, show_gui=False, mesh_format=mesh_format)
                 elif num_points == 8:  # 8-point variant
-                    generate_mesh_from_points_8pnt(points, mesh_out, show_gui=False)
+                    generate_mesh_from_points_8pnt(points, mesh_out, show_gui=False, mesh_format=mesh_format)
                 elif num_points == 10:  # 10-point variant
-                    generate_mesh_from_points_10pnt(points, mesh_out, show_gui=False)
+                    generate_mesh_from_points_10pnt(points, mesh_out, show_gui=False, mesh_format=mesh_format)
                 print(f"  Mesh saved to {mesh_out}")
             except Exception as e:
                 msg = str(e)
@@ -102,7 +108,8 @@ def main(
             slurm_ntasks=sweep_slurm_ntasks,
             module_load=sweep_module_load,
             clear_output_before_run=sweep_clear_output_before_run,
-            write_master_slurm_script_flag=sweep_write_master_slurm_script
+            write_master_slurm_script_flag=sweep_write_master_slurm_script,
+            mesh_formats=[mesh_format]
         )
 
 if __name__ == "__main__":
@@ -119,10 +126,11 @@ if __name__ == "__main__":
     SWEEP_SLURM_TIME = "01:00:00"
     SWEEP_SLURM_NODES = 1
     SWEEP_SLURM_NTASKS = 4
-    SWEEP_MODULE_LOAD = "module load su2/4.1.0"
+    SWEEP_MODULE_LOAD = "module load su2/8.1.0"
     SWEEP_CLEAR_OUTPUT_BEFORE_RUN = True
     SWEEP_WRITE_MASTER_SLURM_SCRIPT = True
     RUN_SWEEP = True
+    MESH_FORMAT = 'msh'
 
     main(
         points_dir=POINTS_DIR,
@@ -139,5 +147,6 @@ if __name__ == "__main__":
         sweep_slurm_ntasks=SWEEP_SLURM_NTASKS,
         sweep_module_load=SWEEP_MODULE_LOAD,
         sweep_clear_output_before_run=SWEEP_CLEAR_OUTPUT_BEFORE_RUN,
-        sweep_write_master_slurm_script=SWEEP_WRITE_MASTER_SLURM_SCRIPT
+        sweep_write_master_slurm_script=SWEEP_WRITE_MASTER_SLURM_SCRIPT,
+        mesh_format=MESH_FORMAT
     )

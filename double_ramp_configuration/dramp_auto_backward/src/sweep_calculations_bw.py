@@ -118,11 +118,22 @@ def generate_sweeps_for_mesh_folder(
     slurm_ntasks=4,
     module_load="module load su2/4.1.0",
     clear_output_before_run=True,
-    write_master_slurm_script_flag=True
+    write_master_slurm_script_flag=True,
+    mesh_formats=None
 ):
     """
-    Generate sweep cases for all .msh files in a given directory using extracted mach/pressure values.
+    Generate sweep cases for all mesh files in a given directory using extracted mach/pressure values.
+
+    Parameters
+    ----------
+    mesh_formats : list[str] | None
+        List of acceptable mesh file extensions (without leading dots). If None, defaults to ['msh'].
+        Examples: ['msh', 'su2', 'cgns'].
     """
+    if mesh_formats is None:
+        mesh_formats = ['msh']
+    mesh_formats = [fmt.lower().lstrip('.') for fmt in mesh_formats]
+
     if clear_output_before_run:
         clear_output_directory(output_root)
     os.makedirs(output_root, exist_ok=True)
@@ -130,8 +141,10 @@ def generate_sweeps_for_mesh_folder(
     with open(cfg_template, 'r') as f:
         base_cfg = f.read()
 
+    mesh_count = 0
     for fname in os.listdir(mesh_dir):
-        if not fname.endswith('.msh'):
+        ext = os.path.splitext(fname)[1].lower().lstrip('.')
+        if ext not in mesh_formats:
             continue
 
         try:
@@ -139,7 +152,7 @@ def generate_sweeps_for_mesh_folder(
         except ValueError as e:
             print(f"Skipping file due to error: {e}")
             continue
-
+        mesh_count += 1
         mesh_path = os.path.join(mesh_dir, fname)
         mesh_base = os.path.splitext(fname)[0]
 
@@ -164,7 +177,7 @@ def generate_sweeps_for_mesh_folder(
                 slurm_partition, slurm_time, slurm_nodes, slurm_ntasks, module_load
             )
 
-    print(f"\n+++ SU2 cases created in: {output_root}/")
+    print(f"\n+++ SU2 cases created in: {output_root}/  (processed {mesh_count} mesh files; formats accepted: {mesh_formats})")
 
     if write_master_slurm_script_flag:
         write_master_slurm_script(output_root)

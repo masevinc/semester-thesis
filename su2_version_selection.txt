@@ -1,0 +1,34 @@
+1. Using your existing aliases
+
+Your .zshrc file already defines two aliases:
+
+su2v8 → points to SU2 version 8.1
+
+su2v4_1 → points to SU2 version 4.1.0
+
+Steps:
+
+source ~/.zshrc   # reload your zsh config
+su2v8             # activate SU2 8.1
+which SU2_CFD     # check the binary location
+SU2_CFD --version # confirm the version
+
+
+To switch to version 4.1.0:
+
+su2v4_1
+which SU2_CFD
+SU2_CFD --version
+
+2. Making one version the default
+
+If you want SU2 to always start in one version (e.g. 8.1) whenever you open a terminal, add these lines at the bottom of your .zshrc (uncomment or edit them):
+
+export SU2_RUN=~/Desktop/su2/su2_sourcecode/su2-8.1/bin
+export PATH="$SU2_RUN:$PATH"
+export PYTHONPATH="$SU2_RUN:$PYTHONPATH"
+
+
+Then reload:
+
+source ~/.zshrc
