@@ -1,10 +1,11 @@
 from src.extract_points_s1 import extract_points_batch
 from src.run_automation_s2 import main
 
-USE_RANDOM = True   # Toggle this to enable/disable random sampling easily
+USE_RANDOM = False   # Toggle this to enable/disable random sampling easily
 SAMPLE_SIZE = 50     # Only used if USE_RANDOM=True (or legacy if left True with value)
 RANDOM_SEED = 123
 MESH_FORMAT = 'su2'  # choose among: 'msh', 'su2', 'cgns'
+WRITE_LOCAL_SWEEP_SCRIPT = True  # new: create run_all_local.sh for sequential local execution
 
 extract_points_batch(
     data_dir="./double_ramp_configuration/inputs/double_ramp_npz_files_clamped",
@@ -36,5 +37,6 @@ main(
     sweep_module_load="module load su2/8.1.0",
     sweep_clear_output_before_run=True,
     sweep_write_master_slurm_script=True,
-    mesh_format=MESH_FORMAT
+    mesh_format=MESH_FORMAT,
+    sweep_write_master_local_script=WRITE_LOCAL_SWEEP_SCRIPT
 )

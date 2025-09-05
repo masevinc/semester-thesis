@@ -107,6 +107,32 @@ srun SU2_CFD case.cfg
     with open(script_path, "w") as f:
         f.write(content)
 
+def write_master_local_script(output_root):
+    """Create a local shell script to run all cases sequentially (no SLURM).
+    The script becomes location agnostic: you can run it from any directory.
+    """
+    script_path = os.path.join(output_root, "run_all_local.sh")
+    with open(script_path, "w") as f:
+        f.write("#!/bin/bash\n")
+        f.write("# Auto-generated: sequential local execution of all SU2 cases\n")
+        f.write("SCRIPT_DIR=\"$( cd -- \"$( dirname -- \"${BASH_SOURCE[0]}\" )\" &> /dev/null && pwd )\"\n")
+        f.write("echo 'Running all local SU2 cases under:' $SCRIPT_DIR\n")
+        f.write("START_TIME=$(date +%s)\n")
+        f.write("COUNT=0\n")
+        f.write("FAIL=0\n")
+        f.write("for case_dir in $SCRIPT_DIR/*; do\n")
+        f.write("  [ -d \"$case_dir\" ] || continue\n")
+        f.write("  if [ -f \"$case_dir/run.sh\" ]; then\n")
+        f.write("    echo \"=== Case: $(basename $case_dir) ===\"\n")
+        f.write("    (cd \"$case_dir\" && ./run.sh) || { echo '  -> FAILED'; FAIL=$((FAIL+1)); }\n")
+        f.write("    COUNT=$((COUNT+1))\n")
+        f.write("  fi\n")
+        f.write("done\n")
+        f.write("END_TIME=$(date +%s)\n")
+        f.write("echo \"Completed $COUNT cases (failures: $FAIL) in $((END_TIME-START_TIME)) s\"\n")
+    os.chmod(script_path, 0o755)
+    print(f"+++ Local master run script created: {script_path}")
+
 def generate_sweeps_for_mesh_folder(
     mesh_dir,
     cfg_template,
@@ -119,7 +145,8 @@ def generate_sweeps_for_mesh_folder(
     module_load="module load su2/4.1.0",
     clear_output_before_run=True,
     write_master_slurm_script_flag=True,
-    mesh_formats=None
+    mesh_formats=None,
+    write_master_local_script_flag=False
 ):
     """
     Generate sweep cases for all mesh files in a given directory using extracted mach/pressure values.
@@ -129,6 +156,8 @@ def generate_sweeps_for_mesh_folder(
     mesh_formats : list[str] | None
         List of acceptable mesh file extensions (without leading dots). If None, defaults to ['msh'].
         Examples: ['msh', 'su2', 'cgns'].
+    write_master_local_script_flag : bool
+        If True, write run_all_local.sh that executes each case's run.sh sequentially.
     """
     if mesh_formats is None:
         mesh_formats = ['msh']
@@ -181,3 +210,5 @@ def generate_sweeps_for_mesh_folder(
 
     if write_master_slurm_script_flag:
         write_master_slurm_script(output_root)
+    if write_master_local_script_flag:
+        write_master_local_script(output_root)

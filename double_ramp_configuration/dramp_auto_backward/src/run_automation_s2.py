@@ -48,7 +48,8 @@ def main(
     sweep_module_load="module load su2/4.1.0",
     sweep_clear_output_before_run=True,
     sweep_write_master_slurm_script=True,
-    mesh_format="msh"
+    mesh_format="msh",
+    sweep_write_master_local_script=False
 ):
     """Generate meshes from extracted point files.
 
@@ -109,7 +110,8 @@ def main(
             module_load=sweep_module_load,
             clear_output_before_run=sweep_clear_output_before_run,
             write_master_slurm_script_flag=sweep_write_master_slurm_script,
-            mesh_formats=[mesh_format]
+            mesh_formats=[mesh_format],
+            write_master_local_script_flag=sweep_write_master_local_script
         )
 
 if __name__ == "__main__":
