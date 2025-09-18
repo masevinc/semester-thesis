@@ -13,7 +13,7 @@ import shutil
 import re
 
 GAMMA = 1.4
-R = 287.058
+R = 287
 
 def clear_output_directory(directory):
     """
@@ -62,6 +62,17 @@ def replace_marker_inlet(text, temp, pressure, velocity_x):
     replacement = rf"\g<1>{temp}, {pressure}, {velocity_x:.6f}"
     return re.sub(pattern, replacement, text)
 
+def replace_marker_outlet(text, pressure):
+        """Replace the pressure value in the MARKER_OUTLET line.
+
+        Matches lines like:
+            MARKER_OUTLET = ( Outlet, 101325.0 )
+        and replaces the numeric value with the provided pressure.
+        """
+        pattern = r"(MARKER_OUTLET\s*=\s*\(\s*Outlet\s*,\s*)[\d\.Ee+-]+(\s*\))"
+        replacement = rf"\g<1>{pressure}\g<2>"
+        return re.sub(pattern, replacement, text)
+
 def modify_cfg(cfg_text, mach, temp, pressure, mesh_file):
     velocity_x = compute_velocity_x(mach, temp)
 
@@ -69,6 +80,7 @@ def modify_cfg(cfg_text, mach, temp, pressure, mesh_file):
     cfg_text = replace_value(cfg_text, "FREESTREAM_TEMPERATURE", temp)
     cfg_text = replace_value(cfg_text, "FREESTREAM_PRESSURE", pressure)
     cfg_text = replace_marker_inlet(cfg_text, temp, pressure, velocity_x)
+    #cfg_text = replace_marker_outlet(cfg_text, pressure)
     cfg_text = replace_value(cfg_text, "MESH_FILENAME", mesh_file)
 
     mesh_format = os.path.splitext(mesh_file)[1].replace('.', '').upper()

@@ -4,3 +4,9 @@ __pycache__/
 *.DS_Store
 .vscode/
 .env
+
+# CFD / mesh outputs
+*.msh
+*.cgns
+*.su2
+*.vtu
