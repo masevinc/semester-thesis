@@ -1,23 +1,6 @@
-# Selection manifest generated at UTC: 2025-09-05T15:01:28.173633
-# enable_random_sampling=False, sample_size=50, random_seed=123, total_matches=20, final_count=20
+# Selection manifest generated at UTC: 2025-09-19T07:16:11.771233
+# enable_random_sampling=True, sample_size=3, random_seed=111, total_matches=3976, final_count=3
 # Columns: filename,ramp1,ramp2,ma,pres
-double_ramp_0.011_0.0488_ma_4.153_pres_109047_interpolated_arrays.npz,0.011,0.0488,4.153,109047
-double_ramp_0.011_0.0488_ma_2.892_pres_199070_interpolated_arrays.npz,0.011,0.0488,2.892,199070
-double_ramp_0.011_0.0488_ma_6.859_pres_194500_interpolated_arrays.npz,0.011,0.0488,6.859,194500
-double_ramp_0.011_0.0488_ma_6.097_pres_146810_interpolated_arrays.npz,0.011,0.0488,6.097,146810
-double_ramp_0.011_0.0488_ma_6.167_pres_148468_interpolated_arrays.npz,0.011,0.0488,6.167,148468
-double_ramp_0.011_0.0488_ma_4.423_pres_177761_interpolated_arrays.npz,0.011,0.0488,4.423,177761
-double_ramp_0.011_0.0488_ma_3.342_pres_180165_interpolated_arrays.npz,0.011,0.0488,3.342,180165
-double_ramp_0.011_0.0488_ma_5.958_pres_160141_interpolated_arrays.npz,0.011,0.0488,5.958,160141
-double_ramp_0.011_0.0488_ma_4.143_pres_175289_interpolated_arrays.npz,0.011,0.0488,4.143,175289
-double_ramp_0.011_0.0488_ma_6.519_pres_190694_interpolated_arrays.npz,0.011,0.0488,6.519,190694
-double_ramp_0.011_0.0488_ma_5.859_pres_110342_interpolated_arrays.npz,0.011,0.0488,5.859,110342
-double_ramp_0.011_0.0488_ma_7.03_pres_187832_interpolated_arrays.npz,0.011,0.0488,7.03,187832
-double_ramp_0.011_0.0488_ma_5.332_pres_177207_interpolated_arrays.npz,0.011,0.0488,5.332,177207
-double_ramp_0.011_0.0488_ma_7.557_pres_181160_interpolated_arrays.npz,0.011,0.0488,7.557,181160
-double_ramp_0.011_0.0488_ma_4.83_pres_129535_interpolated_arrays.npz,0.011,0.0488,4.83,129535
-double_ramp_0.011_0.0488_ma_2.02_pres_136903_interpolated_arrays.npz,0.011,0.0488,2.02,136903
-double_ramp_0.011_0.0488_ma_6.888_pres_125330_interpolated_arrays.npz,0.011,0.0488,6.888,125330
-double_ramp_0.011_0.0488_ma_6.361_pres_197669_interpolated_arrays.npz,0.011,0.0488,6.361,197669
-double_ramp_0.011_0.0488_ma_7.967_pres_169166_interpolated_arrays.npz,0.011,0.0488,7.967,169166
-double_ramp_0.011_0.0488_ma_5.609_pres_129856_interpolated_arrays.npz,0.011,0.0488,5.609,129856
+double_ramp_0.0372_0.0172_ma_3.743_pres_126300_interpolated_arrays.npz,0.0372,0.0172,3.743,126300
+double_ramp_0.0414_0.0646_ma_3.354_pres_178333_interpolated_arrays.npz,0.0414,0.0646,3.354,178333
+double_ramp_0.0225_0.0514_ma_2.901_pres_182108_interpolated_arrays.npz,0.0225,0.0514,2.901,182108
