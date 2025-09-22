@@ -9,6 +9,9 @@ mesh_generator.py
 import gmsh
 from src.point_transfer import generate_gmsh_point_code  # Must return GMSH Python API lines
 
+DEFAULT_VERTICAL_NODES = 151
+DEFAULT_HORIZONTAL_TARGET_NODES = 251
+
 #  Helpers for proportional horizontal node allocation 
 def _dist(p, q):
     dx = p[0] - q[0]
@@ -192,7 +195,14 @@ def _prepare_output(mesh_output_path, mesh_format=None):
 
 # 12 points expected for double ramp
 
-def generate_mesh_from_points(points, mesh_output_path, show_gui=False, mesh_format=None):
+def generate_mesh_from_points(
+    points,
+    mesh_output_path,
+    show_gui: bool = False,
+    mesh_format=None,
+    vertical_nodes: int = DEFAULT_VERTICAL_NODES,
+    horizontal_target_nodes: int = DEFAULT_HORIZONTAL_TARGET_NODES,
+):
     gmsh.initialize()
     gmsh.model.add("double_ramp_python")
 
@@ -232,12 +242,12 @@ def generate_mesh_from_points(points, mesh_output_path, show_gui=False, mesh_for
 
     # Transfinite mesh settings
     gmsh.model.mesh.setTransfiniteSurface(1, cornerTags=[12, 7, 6, 1])
-    # Vertical (inlet/outlet): keep 257 nodes (256 cells)
-    gmsh.model.mesh.setTransfiniteCurve(12, 201, coef=1)
-    gmsh.model.mesh.setTransfiniteCurve(6, 201, coef=1)
+    # Vertical (inlet/outlet)
+    gmsh.model.mesh.setTransfiniteCurve(12, vertical_nodes, coef=1)
+    gmsh.model.mesh.setTransfiniteCurve(6, vertical_nodes, coef=1)
 
     # Horizontal: distribute to reach total of 257 nodes across the chain
-    n1, n2, n3, n4, n5 = _compute_horizontal_counts(points, target_total_nodes=321)
+    n1, n2, n3, n4, n5 = _compute_horizontal_counts(points, target_total_nodes=horizontal_target_nodes)
     # Pairs: (1,11), (2,10), (3,9), (4,8), (5,7)
     gmsh.model.mesh.setTransfiniteCurve(1, n1, coef=1)
     gmsh.model.mesh.setTransfiniteCurve(11, n1, coef=1)
@@ -269,7 +279,14 @@ def generate_mesh_from_points(points, mesh_output_path, show_gui=False, mesh_for
 
 # 8 points expected for single ramp
 
-def generate_mesh_from_points_8pnt(points, mesh_output_path, show_gui=False, mesh_format=None):
+def generate_mesh_from_points_8pnt(
+    points,
+    mesh_output_path,
+    show_gui: bool = False,
+    mesh_format=None,
+    vertical_nodes: int = DEFAULT_VERTICAL_NODES,
+    horizontal_target_nodes: int = DEFAULT_HORIZONTAL_TARGET_NODES,
+):
     gmsh.initialize()
     gmsh.model.add("8pnt_ramp_python")
 
@@ -305,12 +322,12 @@ def generate_mesh_from_points_8pnt(points, mesh_output_path, show_gui=False, mes
 
     # Transfinite mesh settings
     gmsh.model.mesh.setTransfiniteSurface(1, cornerTags=[8, 5, 4, 1])
-    # Vertical: 8 (left), 4 (right)
-    gmsh.model.mesh.setTransfiniteCurve(8, 201, coef=1)
-    gmsh.model.mesh.setTransfiniteCurve(4, 201, coef=1)
+    # Vertical curves
+    gmsh.model.mesh.setTransfiniteCurve(8, vertical_nodes, coef=1)
+    gmsh.model.mesh.setTransfiniteCurve(4, vertical_nodes, coef=1)
 
     # Horizontal: 3 segments -> total nodes 257 across chain
-    h1, h2, h3 = _compute_horizontal_counts_8p(points, target_total_nodes=321)
+    h1, h2, h3 = _compute_horizontal_counts_8p(points, target_total_nodes=horizontal_target_nodes)
     # Pairs: (1,7), (2,6), (3,5)
     gmsh.model.mesh.setTransfiniteCurve(1, h1, coef=1)
     gmsh.model.mesh.setTransfiniteCurve(7, h1, coef=1)
@@ -335,7 +352,14 @@ def generate_mesh_from_points_8pnt(points, mesh_output_path, show_gui=False, mes
     gmsh.finalize()
     
     
-def generate_mesh_from_points_10pnt(points, mesh_output_path, show_gui=False, mesh_format=None):
+def generate_mesh_from_points_10pnt(
+    points,
+    mesh_output_path,
+    show_gui: bool = False,
+    mesh_format=None,
+    vertical_nodes: int = DEFAULT_VERTICAL_NODES,
+    horizontal_target_nodes: int = DEFAULT_HORIZONTAL_TARGET_NODES,
+):
     gmsh.initialize()
     gmsh.model.add("10pnt_ramp_python")
 
@@ -373,12 +397,12 @@ def generate_mesh_from_points_10pnt(points, mesh_output_path, show_gui=False, me
 
     # Transfinite mesh settings
     gmsh.model.mesh.setTransfiniteSurface(1, cornerTags=[10, 6, 5, 1])
-    # Vertical: 10 (left), 5 (right)
-    gmsh.model.mesh.setTransfiniteCurve(10, 201, coef=1)
-    gmsh.model.mesh.setTransfiniteCurve(5, 201, coef=1)
+    # Vertical curves
+    gmsh.model.mesh.setTransfiniteCurve(10, vertical_nodes, coef=1)
+    gmsh.model.mesh.setTransfiniteCurve(5, vertical_nodes, coef=1)
 
     # Horizontal: 4 segments -> total nodes 257 across chain
-    k1, k2, k3, k4 = _compute_horizontal_counts_10p(points, target_total_nodes=321)
+    k1, k2, k3, k4 = _compute_horizontal_counts_10p(points, target_total_nodes=horizontal_target_nodes)
     # Pairs: (1,9), (2,8), (3,7), (4,6)
     gmsh.model.mesh.setTransfiniteCurve(1, k1, coef=1)
     gmsh.model.mesh.setTransfiniteCurve(9, k1, coef=1)

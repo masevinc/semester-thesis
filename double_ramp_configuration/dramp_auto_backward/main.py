@@ -17,21 +17,21 @@ USE_RANDOM = True    # Toggle this to enable/disable random sampling easily
 DO_EVAL_VIZ = True   # If True: produce evaluation overlays after extraction
 VIZ_ALL_CASES = True # If True: visualize every extracted case; if False: only first
 MAX_VIZ_CASES = None # Optional int limit (e.g., 50) when VIZ_ALL_CASES True; None = no limit
-DO_MESH = False      # If True: proceed to mesh & sweep stage (requires gmsh). False = extraction + viz only
+DO_MESH = True      # If True: proceed to mesh & sweep stage (requires gmsh). False = extraction + viz only
 SAMPLE_SIZE = 3     # Only used if USE_RANDOM=True (or legacy if left True with value)
-RANDOM_SEED = 111
+RANDOM_SEED = 45
 MESH_FORMAT = 'su2'  # choose among: 'msh', 'su2', 'cgns'
 WRITE_LOCAL_SWEEP_SCRIPT = True  # new: create run_all_local.sh for sequential local execution
 
 DATA_DIR = "./double_ramp_configuration/inputs/double_ramp_npz_files_clamped"
 POINTS_DIR = "./double_ramp_configuration/outputs/backward/extracted_points"
-PHYSICAL_HEIGHT = 256
+PHYSICAL_HEIGHT = 1
 
 extract_points_batch(
     data_dir=DATA_DIR,
     output_dir=POINTS_DIR,
     filters={"ramp1": None, "ramp2": None, "min_ma": None, "max_ma": None},
-    selected_keys=["density"],
+    selected_keys=["temperature"],
     physical_height=PHYSICAL_HEIGHT,
     clear_output_before_run=True,
     enable_random_sampling=USE_RANDOM,
@@ -64,7 +64,7 @@ if DO_EVAL_VIZ:
             points_dir=POINTS_DIR,
             output_dir=viz_out_dir,
             physical_height=PHYSICAL_HEIGHT,
-            data_key="density",
+            data_key="temperature",
             max_cases=MAX_VIZ_CASES
         )
     else:
@@ -73,7 +73,7 @@ if DO_EVAL_VIZ:
             points_dir=POINTS_DIR,
             output_dir=viz_out_dir,
             physical_height=PHYSICAL_HEIGHT,
-            data_key="density",
+            data_key="temperature",
             figure_name="first_case_overlay"
         )
 
@@ -89,7 +89,7 @@ if DO_MESH:
             error_log="./double_ramp_configuration/outputs/backward/mesh_errors.csv",
             expected_num_points=12,
             run_sweep=True,
-            sweep_cfg_template="./double_ramp_configuration/inputs/hybrid_dbl_ramp.cfg",  # or inv_wedge_HLLC.cfg
+            sweep_cfg_template="./double_ramp_configuration/inputs/hybrid_dbl_ramp_v2.cfg",  # or inv_wedge_HLLC.cfg
             sweep_output_root="./double_ramp_configuration/outputs/backward/sweep",
             sweep_inlet_temperatures=[300.0],  # adjust list as desired
             sweep_slurm_partition="standard",

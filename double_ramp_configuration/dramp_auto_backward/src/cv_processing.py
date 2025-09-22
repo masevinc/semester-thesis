@@ -13,6 +13,72 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 import cv2
 from src.point_reorder_gmsh import sort_points
 
+# ---------------------------------------------------------------------------
+# Aggressive ramp start (2nd point) detection configuration
+# These defaults can be tuned if needed; they are intentionally conservative
+# except for the ramp drop threshold to aggressively capture the transition.
+# ---------------------------------------------------------------------------
+AGGR_ENABLE = True  # Master toggle for aggressive 2nd point capture
+AGGR_LEFT_BAND_WIDTH = 12      # Pixels from left boundary to characterize plateau
+AGGR_PLATEAU_Y_TOL = 2         # ± pixel tolerance to consider y still on plateau
+AGGR_RAMP_DROP_THRESH = 3      # First y increase (downward in image coords) beyond this indicates ramp start
+AGGR_INTERPOLATE = False       # If True, linearly interpolate ramp start (rarely necessary; contour is discrete)
+
+def _detect_ramp_start_point(contour):
+    """Detect the x-position at which the top flat (plateau) ends and the first ramp begins.
+
+    Parameters
+    ----------
+    contour : np.ndarray
+        Array of shape (N, 1, 2) or (N,2) with integer pixel coordinates (OpenCV contour).
+
+    Returns
+    -------
+    (int, int) or None
+        (x_plateau_end, plateau_y) for the SECOND point. plateau_y is the y of the left/top start.
+        Returns None if a confident detection is not possible (fallback logic will be used).
+    """
+    try:
+        pts = contour.reshape(-1, 2)
+        # Identify leftmost x and gather plateau candidate y's within band
+        min_x = int(np.min(pts[:, 0]))
+        band_mask = pts[:, 0] <= (min_x + AGGR_LEFT_BAND_WIDTH)
+        band_pts = pts[band_mask]
+        if band_pts.size == 0:
+            return None
+        # Plateau y taken as robust central tendency (median)
+        plateau_y = int(np.median(band_pts[:, 1]))
+
+        # Sort by x to scan outward
+        order = np.argsort(pts[:, 0])
+        last_plateau_idx = None
+        for idx in order:
+            x, y = pts[idx]
+            if abs(int(y) - plateau_y) <= AGGR_PLATEAU_Y_TOL:
+                last_plateau_idx = idx
+                continue
+            # y increases (image coordinate) when geometry goes downward physically
+            if last_plateau_idx is not None and (y - plateau_y) >= AGGR_RAMP_DROP_THRESH:
+                # Optional interpolation between last plateau point and this first drop point
+                if AGGR_INTERPOLATE:
+                    x_prev, y_prev = pts[last_plateau_idx]
+                    dy_total = y - y_prev
+                    if dy_total <= 0:
+                        # Degenerate; fallback to previous x
+                        return int(x_prev), int(plateau_y)
+                    # Fraction until threshold reached
+                    frac = (AGGR_RAMP_DROP_THRESH) / dy_total
+                    frac = max(0.0, min(1.0, frac))
+                    x_interp = x_prev + frac * (x - x_prev)
+                    return int(round(x_interp)), int(plateau_y)
+                return int(pts[last_plateau_idx][0]), int(plateau_y)
+        # If we never observed a significant drop, still provide the furthest plateau x
+        if last_plateau_idx is not None:
+            return int(pts[last_plateau_idx][0]), int(plateau_y)
+    except Exception:
+        return None
+    return None
+
 
 def extract_metadata(filename):
     """
@@ -57,16 +123,23 @@ def matches_filters(meta, filters):
     return True
 
 
-def extract_image_from_array(npz_path, data_key):
-    """
-    Loads a 2D array from a .npz file and converts it to an RGB image using matplotlib.
+def extract_image_from_array(npz_path, data_key, return_raw: bool = False):
+    """Load a 2D array from a .npz file and render an RGB image via matplotlib.
 
-    Args:
-        npz_path (str): Path to the .npz file.
-        data_key (str): Key of the array to extract.
+    Parameters
+    ----------
+    npz_path : str
+        Path to the .npz file.
+    data_key : str
+        Key of the array to extract.
+    return_raw : bool, default False
+        If True returns a tuple (rgb_image, raw_array). Otherwise only the RGB image
+        (legacy behavior maintained).
 
-    Returns:
-        np.ndarray: RGB image as a numpy array.
+    Returns
+    -------
+    np.ndarray or (np.ndarray, np.ndarray)
+        RGB image (H x W x 3, uint8) or tuple with raw scalar array.
     """
     data = np.load(npz_path)
     if data_key not in data:
@@ -91,24 +164,34 @@ def extract_image_from_array(npz_path, data_key):
     image_np = image_np.reshape((canvas_height, canvas_width, 3))
     plt.close(fig)
 
+    if return_raw:
+        return image_np, array
     return image_np
 
 
-def process_image_from_array(image_array, physical_domain_height=1.0):
-    """
-    Extracts and scales key geometric points from an image array.
+def process_image_from_array(image_array, physical_domain_height=1.0, return_debug: bool = False):
+    """Extract and scale key geometric points from an image array.
 
-    Args:
-        image_array (np.ndarray): RGB image as a numpy array.
-        physical_domain_height (float): Physical height for scaling.
+    Parameters
+    ----------
+    image_array : np.ndarray
+        RGB image as a numpy array.
+    physical_domain_height : float, default 1.0
+        Physical height used to scale pixel coordinates into physical coordinates.
+    return_debug : bool, default False
+        If True returns a tuple (scaled_points, debug_dict) where debug_dict contains
+        intermediate data required for visualization. If False (default) maintains
+        legacy behavior returning only the list of scaled points.
 
-    Returns:
-        list of tuple: Sorted list of (x, y) points in physical coordinates.
+    Returns
+    -------
+    list[(float, float)] or (list[(float,float)], dict)
+        Scaled points (and optionally debug info when return_debug=True).
     """
     # --- Preprocessing: Convert to grayscale and apply median blur ---
     image = image_array.copy()
     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    blurred = cv2.medianBlur(gray, 11)
+    blurred = cv2.medianBlur(gray, 9) #was 11
 
     # --- Thresholding to create binary mask ---
     threshold_value = 30  # Adjust as needed for your images
@@ -121,13 +204,33 @@ def process_image_from_array(image_array, physical_domain_height=1.0):
     wedge_contour = max(contours, key=cv2.contourArea)
 
     # --- Approximate the contour to a polygon ---
-    epsilon = 0.0025 * cv2.arcLength(wedge_contour, True)
+    epsilon = 0.00235 * cv2.arcLength(wedge_contour, True)
     approx = cv2.approxPolyDP(wedge_contour, epsilon, True)
     points = approx.reshape(-1, 2)
 
+    # --- Aggressive detection for 2nd point (ramp start) BEFORE further edits ---
+    detected_second_point = None
+    if AGGR_ENABLE:
+        detected_second_point = _detect_ramp_start_point(wedge_contour)
+
+    # We'll insert / enforce this after ensuring we have at least 2 distinct x's
+
     # --- Align left wall by copying y-value of leftmost point to next leftmost ---
     sorted_indices = np.argsort(points[:, 0])
-    points[sorted_indices[1], 1] = points[sorted_indices[0], 1]
+    if len(sorted_indices) >= 2:
+        points[sorted_indices[1], 1] = points[sorted_indices[0], 1]
+
+    # --- Enforce aggressively detected 2nd point (x of plateau end, y of first point) ---
+    if detected_second_point is not None and len(sorted_indices) >= 2:
+        first_idx = sorted_indices[0]
+        # Replace second point's coordinates
+        second_idx = sorted_indices[1]
+        x_candidate, plateau_y = detected_second_point
+        # Guarantee ordering: x_candidate should be >= first point's x
+        if x_candidate < points[first_idx][0]:
+            x_candidate = points[first_idx][0]
+        points[second_idx][0] = x_candidate
+        points[second_idx][1] = points[first_idx][1]  # same y as first (plateau)
 
     # --- Remove extra right upper corner point if present ---
     x_tolerance = 10
@@ -237,5 +340,26 @@ def process_image_from_array(image_array, physical_domain_height=1.0):
 
     # --- Sort and return the scaled points
     scaled_points = sort_points(scaled_points)
-    return scaled_points
+
+    if not return_debug:
+        return scaled_points
+
+    debug = {
+        "image_rgb": image_array,  # original rendered RGB image
+        "scale_x": scale_x,
+        "scale_y": scale_y,
+        "left_lower": tuple(left_lower.tolist()),
+        "left_upper": tuple(left_upper.tolist()),
+        "right_lower": tuple(right_lower.tolist()),
+        "image_height": image_height,
+        "aggr_second_point_pixel": detected_second_point,
+        "aggr_params": {
+            "enabled": AGGR_ENABLE,
+            "left_band_width": AGGR_LEFT_BAND_WIDTH,
+            "plateau_y_tol": AGGR_PLATEAU_Y_TOL,
+            "ramp_drop_thresh": AGGR_RAMP_DROP_THRESH,
+            "interpolate": AGGR_INTERPOLATE,
+        }
+    }
+    return scaled_points, debug
 

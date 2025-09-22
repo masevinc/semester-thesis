@@ -97,10 +97,21 @@ def main(
                 print(f"  Failed to generate mesh: {msg}")
                 writer.writerow([fname, msg])
 
-    if run_sweep and sweep_cfg_template and sweep_output_root and sweep_inlet_temperatures:
+    if run_sweep and sweep_output_root and sweep_inlet_temperatures:
+        # Support both single template and multi-stage list
+        if isinstance(sweep_cfg_template, (list, tuple)):
+            cfg_stage_templates = list(sweep_cfg_template)
+            single_template = None
+            stage_names = [f"stage{i+1}.cfg" for i in range(len(cfg_stage_templates))]
+        else:
+            cfg_stage_templates = None
+            single_template = sweep_cfg_template
+            stage_names = None
+
         generate_sweeps_for_mesh_folder(
             mesh_dir=mesh_dir,
-            cfg_template=sweep_cfg_template,
+            cfg_template=single_template,
+            cfg_stage_templates=cfg_stage_templates,
             output_root=sweep_output_root,
             inlet_temperatures=sweep_inlet_temperatures,
             slurm_partition=sweep_slurm_partition,
@@ -111,7 +122,8 @@ def main(
             clear_output_before_run=sweep_clear_output_before_run,
             write_master_slurm_script_flag=sweep_write_master_slurm_script,
             mesh_formats=[mesh_format],
-            write_master_local_script_flag=sweep_write_master_local_script
+            write_master_local_script_flag=sweep_write_master_local_script,
+            stage_cfg_names=stage_names,
         )
 
 if __name__ == "__main__":
@@ -121,7 +133,12 @@ if __name__ == "__main__":
     ERROR_LOG = './double_ramp_configuration/outputs/backward/mesh_errors.csv'
     EXPECTED_NUM_POINTS = 12
 
-    SWEEP_CFG_TEMPLATE = './double_ramp_configuration/inputs/inv_wedge_HLLC.cfg'
+    # Provide multi-stage configuration templates (Stage 1 -> Stage 2 -> Stage 3)
+    SWEEP_CFG_TEMPLATE = [
+        './double_ramp_configuration/inputs/hybrid_dbl_ramp_stage1.cfg',
+        './double_ramp_configuration/inputs/hybrid_dbl_ramp_stage2.cfg',
+        './double_ramp_configuration/inputs/hybrid_dbl_ramp_stage3.cfg'
+    ]
     SWEEP_OUTPUT_ROOT = './double_ramp_configuration/outputs/backward/sweep'
     SWEEP_INLET_TEMPERATURES = [250.0, 275.0, 300.0]
     SWEEP_SLURM_PARTITION = "standard"

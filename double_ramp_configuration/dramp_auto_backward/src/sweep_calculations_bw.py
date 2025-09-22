@@ -158,10 +158,16 @@ def generate_sweeps_for_mesh_folder(
     clear_output_before_run=True,
     write_master_slurm_script_flag=True,
     mesh_formats=None,
-    write_master_local_script_flag=False
+    write_master_local_script_flag=False,
+    cfg_stage_templates=None,
+    stage_cfg_names=None,
 ):
     """
-    Generate sweep cases for all mesh files in a given directory using extracted mach/pressure values.
+        Generate sweep cases for all mesh files in a given directory using extracted mach/pressure values.
+
+        Two modes:
+            1. Single-stage (legacy): provide cfg_template (string path) and leave cfg_stage_templates=None. A single case.cfg is generated.
+            2. Multi-stage: provide cfg_stage_templates as list of template paths (e.g., [stage1, stage2, stage3]). A run.sh (and SLURM script) will sequentially run all stages with restart file propagation.
 
     Parameters
     ----------
@@ -175,12 +181,25 @@ def generate_sweeps_for_mesh_folder(
         mesh_formats = ['msh']
     mesh_formats = [fmt.lower().lstrip('.') for fmt in mesh_formats]
 
+    multi_stage = cfg_stage_templates is not None and len(cfg_stage_templates) > 0
+
+    if multi_stage:
+        # Read all stage templates now
+        stage_texts = []
+        for path in cfg_stage_templates:
+            with open(path, 'r') as f:
+                stage_texts.append(f.read())
+        # Provide default stage file names if not supplied
+        if stage_cfg_names is None:
+            stage_cfg_names = [f"stage{i+1}.cfg" for i in range(len(stage_texts))]
+    else:
+        # Single template mode
+        with open(cfg_template, 'r') as f:
+            base_cfg = f.read()
+
     if clear_output_before_run:
         clear_output_directory(output_root)
     os.makedirs(output_root, exist_ok=True)
-
-    with open(cfg_template, 'r') as f:
-        base_cfg = f.read()
 
     mesh_count = 0
     for fname in os.listdir(mesh_dir):
@@ -205,20 +224,76 @@ def generate_sweeps_for_mesh_folder(
             mesh_dest = os.path.join(case_dir, fname)
             shutil.copy(mesh_path, mesh_dest)
 
-            cfg_text = modify_cfg(base_cfg, mach, temp, pressure, fname)
-            with open(os.path.join(case_dir, "case.cfg"), "w") as fcfg:
-                fcfg.write(cfg_text)
+            if multi_stage:
+                # Generate each stage config
+                stage_file_paths = []
+                for idx, (stage_raw, out_name) in enumerate(zip(stage_texts, stage_cfg_names)):
+                    cfg_mod = modify_cfg(stage_raw, mach, temp, pressure, fname)
+                    stage_path = os.path.join(case_dir, out_name)
+                    with open(stage_path, 'w') as fs:
+                        fs.write(cfg_mod)
+                    stage_file_paths.append(stage_path)
 
-            with open(os.path.join(case_dir, "run.sh"), "w") as frun:
-                frun.write("#!/bin/bash\nSU2_CFD case.cfg\n")
-            os.chmod(os.path.join(case_dir, "run.sh"), 0o755)
+                # Compose run.sh executing stages sequentially with restart file propagation if distinct names used
+                run_lines = ["#!/bin/bash", "set -e", "echo 'Starting multi-stage SU2 run'",]
+                # Detect restart file names used in each stage for propagation
+                # Simple heuristic: look for 'restart_flow_stageX.dat' pattern; else copy generically.
+                for idx, sp in enumerate(stage_file_paths):
+                    run_lines.append(f"echo '--- Stage {idx+1}: {os.path.basename(sp)}'")
+                    run_lines.append(f"SU2_CFD {os.path.basename(sp)}")
+                    # After executing a stage, if next stage needs a different restart filename, copy.
+                    if idx < len(stage_file_paths)-1:
+                        try:
+                            with open(stage_file_paths[idx+1], 'r') as nf:
+                                next_text = nf.read()
+                            with open(stage_file_paths[idx], 'r') as cf:
+                                curr_text = cf.read()
+                            m_next = re.search(r"RESTART_FILENAME\s*=\s*([^\n\r]+)", next_text)
+                            m_curr = re.search(r"RESTART_FILENAME\s*=\s*([^\n\r]+)", curr_text)
+                            if m_next and m_curr:
+                                next_restart = m_next.group(1).strip()
+                                curr_restart = m_curr.group(1).strip()
+                                if next_restart != curr_restart:
+                                    run_lines.append(f"[ -f {curr_restart} ] && cp {curr_restart} {next_restart} 2>/dev/null || true")
+                        except Exception:
+                            pass
+                        # Add explicit guard that restart from current stage exists before proceeding
+                        run_lines.append("if [ ! -f restart_flow.dat ]; then echo 'ERROR: restart_flow.dat not produced by previous stage'; exit 2; fi")
+                with open(os.path.join(case_dir, "run.sh"), 'w') as frun:
+                    frun.write("\n".join(run_lines) + "\n")
+                os.chmod(os.path.join(case_dir, "run.sh"), 0o755)
 
-            write_slurm_script(
-                case_dir, case_name,
-                slurm_partition, slurm_time, slurm_nodes, slurm_ntasks, module_load
-            )
+                # SLURM script with the same multi-stage content
+                slurm_content = [
+                    "#!/bin/bash",
+                    f"#SBATCH --job-name={case_name}",
+                    "#SBATCH --output=output.log",
+                    "#SBATCH --error=error.log",
+                    f"#SBATCH --time={slurm_time}",
+                    f"#SBATCH --partition={slurm_partition}",
+                    f"#SBATCH --nodes={slurm_nodes}",
+                    f"#SBATCH --ntasks={slurm_ntasks}",
+                    "",
+                    module_load,
+                ] + [line for line in run_lines if not line.startswith('#!')]
+                with open(os.path.join(case_dir, "submit.slurm"), 'w') as fsb:
+                    fsb.write("\n".join(slurm_content) + "\n")
+            else:
+                cfg_text = modify_cfg(base_cfg, mach, temp, pressure, fname)
+                with open(os.path.join(case_dir, "case.cfg"), "w") as fcfg:
+                    fcfg.write(cfg_text)
 
-    print(f"\n+++ SU2 cases created in: {output_root}/  (processed {mesh_count} mesh files; formats accepted: {mesh_formats})")
+                with open(os.path.join(case_dir, "run.sh"), "w") as frun:
+                    frun.write("#!/bin/bash\nSU2_CFD case.cfg\n")
+                os.chmod(os.path.join(case_dir, "run.sh"), 0o755)
+
+                write_slurm_script(
+                    case_dir, case_name,
+                    slurm_partition, slurm_time, slurm_nodes, slurm_ntasks, module_load
+                )
+
+    mode_desc = 'multi-stage' if multi_stage else 'single-stage'
+    print(f"\n+++ SU2 cases ({mode_desc}) created in: {output_root}/  (processed {mesh_count} mesh files; formats accepted: {mesh_formats})")
 
     if write_master_slurm_script_flag:
         write_master_slurm_script(output_root)

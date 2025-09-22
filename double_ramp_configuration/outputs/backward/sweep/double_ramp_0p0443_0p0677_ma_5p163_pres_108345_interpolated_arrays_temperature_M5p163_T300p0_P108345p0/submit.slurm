@@ -1,0 +1,11 @@
+#!/bin/bash
+#SBATCH --job-name=double_ramp_0p0443_0p0677_ma_5p163_pres_108345_interpolated_arrays_temperature_M5p163_T300p0_P108345p0
+#SBATCH --output=output.log
+#SBATCH --error=error.log
+#SBATCH --time=01:00:00
+#SBATCH --partition=standard
+#SBATCH --nodes=1
+#SBATCH --ntasks=4
+
+module load su2/8.1.0
+srun SU2_CFD case.cfg

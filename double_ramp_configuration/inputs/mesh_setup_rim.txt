@@ -1,0 +1,48 @@
+import numpy as np
+import random
+import os
+
+os.mkdir("./double_ramps_200/")
+os.mkdir("./double_ramps_200/su2_meshes/")
+os.mkdir("./double_ramps_200/geo_files/")
+
+for i in range(200):
+
+# Round the number to two decimal places
+y_ramp_1 = round(random.uniform(0.01, 0.05), 4)
+y_ramp_2 = round(random.uniform(np.maximum(0.0, y_ramp_1 - 0.04), y_ramp_1 + 0.04), 4)
+
+# Set filepath
+with open(f'double_ramps_200/geo_files/double_ramp_{y_ramp_1}_{y_ramp_2}.geo', 'w') as f:
+f.write('SetFactory("OpenCASCADE");\n')
+f.write('Point(1) = {0.08, 0, 0, 1.0};\n')
+f.write('Point(2) = {0.1, 0, 0, 1.0};\n')
+f.write('Point(3) = {0.2, ' + str(y_ramp_1) + ', 0, 1.0};\n')
+f.write('Point(4) = {0.3, ' + str(y_ramp_1) + ', 0, 1.0};\n')
+f.write('Point(5) = {0.4, ' + str(y_ramp_2) + ', 0, 1.0};\n')
+f.write('Point(6) = {0.7, ' + str(y_ramp_2) + ', 0, 1.0};\n')
+f.write('Point(7) = {0.7, 0.4, 0, 1.0};\n')
+f.write('Point(8) = {0.08, 0.4, 0, 1.0};\n')
+f.write('Line(1) = {1, 2};\n')
+f.write('Line(2) = {2, 3};\n')
+f.write('Line(3) = {3, 4};\n')
+f.write('Line(4) = {4, 5};\n')
+f.write('Line(5) = {5, 6};\n')
+f.write('Line(6) = {6, 7};\n')
+f.write('Line(7) = {7, 8};\n')
+f.write('Line(8) = {8, 1};\n')
+f.write('Curve Loop(1) = {7, 8, 1, 2, 3, 4, 5, 6};\n')
+f.write('Plane Surface(1) = {1};\n')
+f.write('Physical Curve("Inlet", 9) = {8};\n')
+f.write('Physical Curve("Outlet", 10) = {6};\n')
+f.write('Physical Curve("Wall", 11) = {7, 1, 2, 3, 4, 5};\n')
+f.write('Physical Surface("Fluid", 12) = {1};\n')
+f.write('Transfinite Surface {1} = {8, 7, 6, 1};\n')
+f.write('Transfinite Curve {8, 6} = 201 Using Progression 1;\n')
+f.write('Transfinite Curve {2, 3, 4} = 51 Using Progression 1;\n')
+f.write('Transfinite Curve {1} = 11 Using Progression 1;\n')
+f.write('Transfinite Curve {5} = 151 Using Progression 1;\n')
+f.write('Transfinite Curve {7} = 311 Using Progression 1;\n')
+f.write('Recombine Surface {1};\n')
+
+os.system(f"./gmsh ./double_ramps_200/geo_files/double_ramp_{y_ramp_1}_{y_ramp_2}.geo -2 -o ./double_ramps_200/su2_meshes/double_ramp_{y_ramp_1}_{y_ramp_2}.su2")

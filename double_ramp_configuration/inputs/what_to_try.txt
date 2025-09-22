@@ -1,0 +1,37 @@
+% Strategy Compromises:
+%  - Keep MUSCL ON (accuracy) but use moderately strong limiter.
+%  - Use HLLC (robust) rather than the sharper AUSMPLUSUP; you can switch to AUSM
+%    manually later by editing just that line if stable.
+%  - Moderate CFL ramp: gentle enough for early shock formation, high ceiling for tail speed.
+%  - Disable Newton-Krylov (optional acceleration) to avoid early nonlinear instabilities.
+%  - Slightly deeper linear solver iterations to compensate for NK off.
+%  - Light multigrid with a touch more smoothing on coarser levels.
+
+% ---------------- Progress Milestones (RMS_DENSITY) --------------------------
+% Iter ~50: < 0.5 (shock formed)
+% Iter ~150: < 0.15
+% Iter ~300: < 5e-2
+% Iter ~500: < 5e-3
+% Tail: push toward 1e-5 – 1e-6 (may slow; consider raising VENKAT coeff or enabling NK at rerun if needed)
+
+% ---------------- If Problems ------------------------------------------------
+% Residual stuck ~1:
+%   -> Lower CFL_NUMBER to 0.45; reduce up factor to 1.08; VENKAT_LIMITER_COEFF=0.5
+% Residual oscillatory (saw-tooth):
+%   -> Cap CFL_max to 80; or LINEAR_SOLVER_ITER=24; keep NK OFF.
+% Plateau near 1e-2:
+%   -> Raise VENKAT_LIMITER_COEFF=0.75 and maybe CFL_max=180.
+% Late plateau 1e-3 to 1e-4:
+%   -> Tighten LINEAR_SOLVER_ERROR=2E-5 or enable NK (but that requires editing NEWTON_KRYLOV=YES and re-running from scratch since no restarts).
+% Divergence spike:
+%   -> Reduce CFL_NUMBER to 0.4 and CFL_up to 1.06; VENKAT_LIMITER_COEFF=0.5.
+
+
+Typical Convergence Pitfalls for This Case
+Overly sharp limiter + early second-order reconstruction on a mesh that may not be sufficiently refined at both ramp corners and interaction region → residual “floors”.
+Too small CFL ceiling prevents accelerating once the solution is in the basin of attraction.
+Weak linear solve (FGMRES 3 iters, tight error 1e-6 may waste cycles early / stall late).
+No multigrid → slow decay of global low-frequency density error.
+Possibly inappropriate outlet BC type (if supersonic outflow).
+Running fully nonlinear (Newton–Krylov) too aggressively before a smooth first-order stabilized core solution forms.
+ 

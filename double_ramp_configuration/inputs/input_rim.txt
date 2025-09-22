@@ -1,0 +1,119 @@
+import os
+import numpy as np
+import random
+
+# Some constants:
+T_free_stream = 300.0
+K = 1.4
+R = 287
+# For each geometry configuration, we will create 20 different simulation cases (different Ma und Pressure)
+
+meshes_path = './su2_meshes_3/'
+
+# Loop through all files in the directory
+for filename in os.listdir(meshes_path):
+    #print(filename)
+    base_name, extension = os.path.splitext(filename)
+    
+    for i in range(20):
+        mach_number = round(random.uniform(1.5, 10), 2)
+        P_free_stream = round(random.uniform(90000.0, 200000.0), 0)
+        velocity = mach_number * np.sqrt(T_free_stream*K*R)
+        
+        with open(f'config/{base_name}_ma_{mach_number}_pres_{P_free_stream}.cfg', 'w') as f:
+            
+            f.write('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%\n')
+            f.write('%                                                                              %\n')
+            f.write('% SU2 configuration file                                                       %\n')
+            f.write('% Case description: Supersonic flow over a ramp in a channel (regression)      %\n')
+            f.write('% Author: Thomas D. Economon, Amit Sachdeva                                    %\n')
+            f.write('% Institution: Stanford University                                             %\n')
+            f.write('% Date: 2023.04.08                                                             %\n')
+            f.write('% File Version 8.0.0 "Harrier"                                                 %\n')
+            f.write('%                                                                              %\n')
+            f.write('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%\n')
+
+            f.write('% ------------- DIRECT, ADJOINT, AND LINEARIZED PROBLEM DEFINITION ------------%\n')
+            f.write('%\n')
+            f.write('SOLVER= EULER\n')
+            f.write('MATH_PROBLEM= DIRECT\n')
+            f.write('RESTART_SOL= NO\n')
+
+            f.write('% ----------- COMPRESSIBLE AND INCOMPRESSIBLE FREE-STREAM DEFINITION ----------%\n')
+            f.write('%\n')
+            f.write(f'MACH_NUMBER= {mach_number}\n')
+            f.write('AOA= 0.0\n')
+            f.write('SIDESLIP_ANGLE= 0.0\n')
+            f.write(f'FREESTREAM_PRESSURE= {P_free_stream}\n')
+            f.write('FREESTREAM_TEMPERATURE= 300.0\n')
+
+            f.write('% ---------------------- REFERENCE VALUE DEFINITION ---------------------------%\n')
+            f.write('%\n')
+            f.write('REF_ORIGIN_MOMENT_X = 0.25\n')
+            f.write('REF_ORIGIN_MOMENT_Y = 0.00\n')
+            f.write('REF_ORIGIN_MOMENT_Z = 0.00\n')
+            f.write('REF_LENGTH= 1.0\n')
+            f.write('REF_AREA= 1.0\n')
+
+            f.write('% -------------------- BOUNDARY CONDITION DEFINITION --------------------------%\n')
+            f.write('%\n')
+            f.write('MARKER_EULER= ( Wall )\n')
+            f.write(f'MARKER_SUPERSONIC_INLET= ( Inlet, 300.0, {P_free_stream}, {velocity}, 0.0, 0.0 )\n')
+            f.write(f'MARKER_OUTLET= ( Outlet, {P_free_stream} )\n')
+            f.write('MARKER_PLOTTING= ( Wall )\n')
+            f.write('MARKER_MONITORING= ( Wall )\n')
+
+            f.write('% ------------- COMMON PARAMETERS DEFINING THE NUMERICAL METHOD ---------------%\n')
+            f.write('%\n')
+            f.write('NUM_METHOD_GRAD= WEIGHTED_LEAST_SQUARES\n')
+            f.write('CFL_NUMBER= 1.0\n')
+            f.write('CFL_ADAPT= YES\n')
+            f.write('CFL_ADAPT_PARAM= ( 0.9, 1.1, 1.0, 100.0, 0.8)\n')
+            f.write('ITER= 600\n')
+            f.write('LINEAR_SOLVER= FGMRES \n')
+            f.write('LINEAR_SOLVER_ERROR= 1E-6\n')
+            f.write('LINEAR_SOLVER_ITER= 3\n')
+            f.write('NEWTON_KRYLOV= YES\n')
+            f.write('NEWTON_KRYLOV_IPARAM= (0, 1, 1) % n0, np, ft\n')
+            f.write('NEWTON_KRYLOV_DPARAM= (0.0, 1e-20, -2.0, 1e-5) % r0, tp, rf, e\n')
+            f.write('MGLEVEL= 0\n')
+
+            f.write('% -------------------- FLOW NUMERICAL METHOD DEFINITION -----------------------%\n')
+            f.write('%\n')
+            f.write('CONV_NUM_METHOD_FLOW= AUSMPLUSUP\n')
+            f.write('MUSCL_FLOW= YES\n')
+            f.write('SLOPE_LIMITER_FLOW= NISHIKAWA_R5 \n')
+            f.write('VENKAT_LIMITER_COEFF= 0.5   \n')
+            f.write('TIME_DISCRE_FLOW= EULER_IMPLICIT\n')
+
+            f.write('% --------------------------- CONVERGENCE PARAMETERS --------------------------%\n')
+            f.write('%\n')
+            f.write('CONV_RESIDUAL_MINVAL= -13\n')
+            f.write('CONV_STARTITER= 10\n')
+            f.write('CONV_CAUCHY_ELEMS= 100\n')
+            f.write('CONV_CAUCHY_EPS= 1E-10\n')
+
+            f.write('% ------------------------- INPUT/OUTPUT INFORMATION --------------------------%\n')
+            f.write('%\n')
+            f.write(f'MESH_FILENAME= {meshes_path}/{filename}\n')
+            f.write('MESH_FORMAT= SU2  \n')
+            f.write(f'MESH_OUT_FILENAME= {meshes_path}/{filename}\n')
+            f.write('SOLUTION_FILENAME= restart_flow.dat\n')
+            f.write('SOLUTION_ADJ_FILENAME= solution_adj.dat\n')
+            f.write('TABULAR_FORMAT= CSV\n')
+            f.write('CONV_FILENAME= history\n')
+            f.write('RESTART_FILENAME= restart_flowrun.dat\n')
+            f.write('RESTART_ADJ_FILENAME= restart_adj.dat\n')
+            f.write(f'VOLUME_FILENAME= double_ramp_sim_3/{base_name}_ma_{mach_number}_pres_{P_free_stream}\n')
+            f.write('VOLUME_ADJ_FILENAME= adjoint\n')
+            f.write('GRAD_OBJFUNC_FILENAME= of_grad.dat\n')
+            f.write('SURFACE_FILENAME= surface_flow\n')
+            f.write('SURFACE_ADJ_FILENAME= surface_adjoint\n')
+            f.write('OUTPUT_WRT_FREQ= 300\n')
+            f.write('SCREEN_OUTPUT = (INNER_ITER, RMS_DENSITY, RMS_ENERGY, LIFT, DRAG)\n')
+            
+        os.system(f'../../../bin/SU2_CFD config/{base_name}_ma_{mach_number}_pres_{P_free_stream}.cfg')    
+
+                
+# Set filepath
+#   with open(f'config/', 'w') as f:
