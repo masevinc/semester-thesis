@@ -44,6 +44,7 @@ def extract_points_batch(
     filters,
     selected_keys,
     physical_height,
+    physical_width=None,
     clear_output_before_run=True,
     # Sampling controls
     enable_random_sampling=False,
@@ -132,7 +133,11 @@ def extract_points_batch(
             try:
                 npz_path = os.path.join(data_dir, fname)
                 image_np = extract_image_from_array(npz_path, data_key=key)
-                points = process_image_from_array(image_np, physical_domain_height=physical_height)
+                points = process_image_from_array(
+                    image_np,
+                    physical_domain_height=physical_height,
+                    physical_domain_width=physical_width
+                )
                 name_no_ext = os.path.splitext(fname)[0]
                 out_path = os.path.join(output_dir, f"{name_no_ext}_{key}.npy")
                 np.save(out_path, np.array(points))
@@ -163,7 +168,8 @@ if __name__ == "__main__":
         output_dir=OUTPUT_DIR,
         filters=FILTERS,
         selected_keys=SELECTED_KEYS,
-        physical_height=PHYSICAL_HEIGHT,
+    physical_height=PHYSICAL_HEIGHT,
+    physical_width=None,
         clear_output_before_run=CLEAR_OUTPUT_BEFORE_RUN,
         enable_random_sampling=ENABLE_RANDOM_SAMPLING,
         sample_size=SAMPLE_SIZE,

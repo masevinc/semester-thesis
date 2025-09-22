@@ -9,8 +9,8 @@ mesh_generator.py
 import gmsh
 from src.point_transfer import generate_gmsh_point_code  # Must return GMSH Python API lines
 
-DEFAULT_VERTICAL_NODES = 151
-DEFAULT_HORIZONTAL_TARGET_NODES = 251
+DEFAULT_VERTICAL_NODES = 201
+DEFAULT_HORIZONTAL_TARGET_NODES = 521
 
 #  Helpers for proportional horizontal node allocation 
 def _dist(p, q):

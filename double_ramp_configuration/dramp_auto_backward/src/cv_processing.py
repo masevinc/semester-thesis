@@ -169,7 +169,7 @@ def extract_image_from_array(npz_path, data_key, return_raw: bool = False):
     return image_np
 
 
-def process_image_from_array(image_array, physical_domain_height=1.0, return_debug: bool = False):
+def process_image_from_array(image_array, physical_domain_height=1.0, physical_domain_width=None, return_debug: bool = False):
     """Extract and scale key geometric points from an image array.
 
     Parameters
@@ -177,7 +177,11 @@ def process_image_from_array(image_array, physical_domain_height=1.0, return_deb
     image_array : np.ndarray
         RGB image as a numpy array.
     physical_domain_height : float, default 1.0
-        Physical height used to scale pixel coordinates into physical coordinates.
+        Physical height used to scale pixel coordinates into physical coordinates (y-direction).
+    physical_domain_width : float | None, default None
+        Physical width for scaling x-direction. If None, uses *physical_domain_height* (legacy
+        behavior assuming a square domain). Provide a value to enable rectangular scaling,
+        e.g. width=0.62, height=0.40.
     return_debug : bool, default False
         If True returns a tuple (scaled_points, debug_dict) where debug_dict contains
         intermediate data required for visualization. If False (default) maintains
@@ -326,8 +330,12 @@ def process_image_from_array(image_array, physical_domain_height=1.0, return_deb
     # --- Scale points to physical domain ---
     pixel_height_y = left_lower[1] - left_upper[1]
     pixel_height_x = right_lower[0] - left_lower[0]
+    # Backward compatible: if no width provided, assume square domain.
+    if physical_domain_width is None:
+        physical_domain_width = physical_domain_height
+
     scale_y = physical_domain_height / pixel_height_y
-    scale_x = physical_domain_height / pixel_height_x
+    scale_x = physical_domain_width / pixel_height_x
     image_height = image.shape[0]
 
     scaled_points = []
@@ -346,8 +354,10 @@ def process_image_from_array(image_array, physical_domain_height=1.0, return_deb
 
     debug = {
         "image_rgb": image_array,  # original rendered RGB image
-        "scale_x": scale_x,
-        "scale_y": scale_y,
+    "scale_x": scale_x,
+    "scale_y": scale_y,
+    "physical_domain_height": physical_domain_height,
+    "physical_domain_width": physical_domain_width,
         "left_lower": tuple(left_lower.tolist()),
         "left_upper": tuple(left_upper.tolist()),
         "right_lower": tuple(right_lower.tolist()),

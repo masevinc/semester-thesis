@@ -7,5 +7,5 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=4
 
-module load su2/8.1.0
+module load su2/8.0.0
 srun SU2_CFD case.cfg

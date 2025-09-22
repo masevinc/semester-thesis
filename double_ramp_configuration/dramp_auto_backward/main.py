@@ -25,14 +25,28 @@ WRITE_LOCAL_SWEEP_SCRIPT = True  # new: create run_all_local.sh for sequential l
 
 DATA_DIR = "./double_ramp_configuration/inputs/double_ramp_npz_files_clamped"
 POINTS_DIR = "./double_ramp_configuration/outputs/backward/extracted_points"
-PHYSICAL_HEIGHT = 1
+# --- Geometry scaling configuration ---
+# Legacy mode: domain treated as square (height == width == PHYSICAL_HEIGHT)
+# New optional rectangular scaling: specify physical width & height explicitly.
+USE_RECTANGULAR_PHYSICAL_SCALE = True  # <- Toggle this to True to enable 0.62 x 0.40 scaling
+PHYSICAL_HEIGHT = 1                     # Legacy reference size (kept for backward compatibility)
+RECT_PHYSICAL_HEIGHT = 0.40             # New physical height (y direction) when rectangular scaling is on
+RECT_PHYSICAL_WIDTH = 0.62              # New physical width  (x direction) when rectangular scaling is on
+
+if USE_RECTANGULAR_PHYSICAL_SCALE:
+    _phys_height = RECT_PHYSICAL_HEIGHT
+    _phys_width = RECT_PHYSICAL_WIDTH
+else:
+    _phys_height = PHYSICAL_HEIGHT
+    _phys_width = None  # None signals square scaling internally
 
 extract_points_batch(
     data_dir=DATA_DIR,
     output_dir=POINTS_DIR,
     filters={"ramp1": None, "ramp2": None, "min_ma": None, "max_ma": None},
     selected_keys=["temperature"],
-    physical_height=PHYSICAL_HEIGHT,
+    physical_height=_phys_height,
+    physical_width=_phys_width,
     clear_output_before_run=True,
     enable_random_sampling=USE_RANDOM,
     sample_size=SAMPLE_SIZE,
@@ -63,7 +77,7 @@ if DO_EVAL_VIZ:
             data_dir=DATA_DIR,
             points_dir=POINTS_DIR,
             output_dir=viz_out_dir,
-            physical_height=PHYSICAL_HEIGHT,
+            physical_height=_phys_height,
             data_key="temperature",
             max_cases=MAX_VIZ_CASES
         )
@@ -72,7 +86,7 @@ if DO_EVAL_VIZ:
             data_dir=DATA_DIR,
             points_dir=POINTS_DIR,
             output_dir=viz_out_dir,
-            physical_height=PHYSICAL_HEIGHT,
+            physical_height=_phys_height,
             data_key="temperature",
             figure_name="first_case_overlay"
         )
@@ -89,14 +103,14 @@ if DO_MESH:
             error_log="./double_ramp_configuration/outputs/backward/mesh_errors.csv",
             expected_num_points=12,
             run_sweep=True,
-            sweep_cfg_template="./double_ramp_configuration/inputs/hybrid_dbl_ramp_v2.cfg",  # or inv_wedge_HLLC.cfg
+            sweep_cfg_template="./double_ramp_configuration/inputs/hybrid_dbl_ramp.cfg",  # or inv_wedge_HLLC.cfg
             sweep_output_root="./double_ramp_configuration/outputs/backward/sweep",
             sweep_inlet_temperatures=[300.0],  # adjust list as desired
             sweep_slurm_partition="standard",
             sweep_slurm_time="01:00:00",
             sweep_slurm_nodes=1,
             sweep_slurm_ntasks=4,
-            sweep_module_load="module load su2/8.1.0",
+            sweep_module_load="module load su2/8.0.0",
             sweep_clear_output_before_run=True,
             sweep_write_master_slurm_script=True,
             mesh_format=MESH_FORMAT,

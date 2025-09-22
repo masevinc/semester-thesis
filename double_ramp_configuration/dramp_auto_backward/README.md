@@ -35,6 +35,32 @@ Troubleshooting:
 - If the overlay shows points misaligned, verify `physical_height` passed to extraction.
 - To debug thresholding logic, temporarily lower the threshold in `cv_processing.py`.
 
+Rectangular Physical Scaling (New Option)
+----------------------------------------
+By default the pipeline assumed a square physical domain (width == height). A new optional
+switch allows you to map pixel coordinates into a rectangular physical space, e.g. width = 0.62
+and height = 0.40 (your updated physical geometry dimensions).
+
+How to enable:
+1. Open `main.py` in this folder.
+2. Set `USE_RECTANGULAR_PHYSICAL_SCALE = True` near the top.
+3. Adjust `RECT_PHYSICAL_WIDTH` and `RECT_PHYSICAL_HEIGHT` if needed (defaults: 0.62, 0.40).
+
+What happens internally:
+* The extraction step now passes both `physical_height` and `physical_width`.
+* If `physical_width` is provided, x coordinates scale with width while y scale with height.
+* Downstream mesh generation receives the already-scaled point set; no other changes required.
+
+Backward compatibility:
+* Leaving the flag False preserves legacy square scaling behavior exactly.
+* No existing functions were modified destructively; a new optional argument `physical_width` was
+  added (default None) to `process_image_from_array` and `extract_points_batch`.
+
+Verification tip:
+After toggling, regenerate a few point sets and open one of the visualization overlays—the aspect
+ratio should now reflect the rectangular scaling when you interpret the axes numerically (e.g., x
+limits extend to ~0.62 while y to ~0.40).
+
 Aggressive 2nd Point (Ramp Start) Detection
 -------------------------------------------
 The extraction pipeline now includes an aggressive strategy to precisely capture the second geometric point: the end of the initial flat (plateau) before the first ramp begins. This point is critical for correctly defining the ramp geometry.
