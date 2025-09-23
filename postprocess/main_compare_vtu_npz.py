@@ -45,6 +45,40 @@ DEFAULT_OUT = "postprocess_outputs/compare_auto"
 DEFAULT_MODE = "batch"  # 'auto' | 'single' | 'batch'
 DEFAULT_CLEAN = True    # remove target output folder(s) before writing
 
+# ---------------------------------------------------------------------
+# INTERNAL CONFIG BLOCK
+# Set USE_INTERNAL_CONFIG = True to bypass CLI and use CONFIG below.
+# ---------------------------------------------------------------------
+USE_INTERNAL_CONFIG = True  # Set True to run with CONFIG block (no CLI needed)
+
+CONFIG = dict(
+    mode=DEFAULT_MODE,              # 'single' | 'batch' | 'auto'
+    # Single case
+    vtu=DEFAULT_VTU,
+    npz=DEFAULT_NPZ,
+    vtu_field=DEFAULT_VTU_FIELD,
+    npz_field=DEFAULT_NPZ_FIELD,
+    out=DEFAULT_OUT,
+    # Batch roots
+    vtu_root=DEFAULT_VTU_ROOT,
+    npz_root=DEFAULT_NPZ_ROOT,
+    out_root="postprocess_outputs/compare_batch",
+    summary_csv="postprocess_outputs/compare_batch_summary.csv",
+    # Mapping/grid
+    mapping=DEFAULT_MAPPING_MODE,
+    npz_y_origin=DEFAULT_NPZ_Y_ORIGIN,
+    outside_value=0.0,
+    clean=True,
+    # Line extraction (horizontal)
+    line_row=40,          # e.g., 80 (0-based)
+    line_y=None,            # physical y value (float) alternative to line_row
+    line_normalize=False,   # normalize by max NPZ line
+    # Global density normalization for plots (divide by reference value)
+    density_normalize=True,        # if True and field is density/rho -> plot normalized
+    density_normalize_mode="mean", # 'max' | 'mean' (ignored if density_normalize_ref given)
+    density_normalize_ref=None,    # if given (float), overrides mode; else use selected mode
+)
+
 
 def _sanitize_key(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", s.lower())
@@ -360,8 +394,8 @@ def plots(outdir: str, X: np.ndarray, Y: np.ndarray, Z_npz: np.ndarray, Z_vtu: n
         plt.close()
 
     # Use the same vmin/vmax for both field plots
-    save_im(Z_npz, f"NPZ: {field_npz}", "npz.png", vmin=vmin_shared, vmax=vmax_shared, cmap='viridis')
-    save_im(Z_vtu, f"VTU→grid: {field_vtu}", "vtu_on_grid.png", vmin=vmin_shared, vmax=vmax_shared, cmap='viridis')
+    save_im(Z_npz, f"(GT - Rim) NPZ: {field_npz}", "GT_npz.png", vmin=vmin_shared, vmax=vmax_shared, cmap='viridis')
+    save_im(Z_vtu, f"(CFD - Alp) VTU→grid: {field_vtu}", "CFD_vtu_on_grid.png", vmin=vmin_shared, vmax=vmax_shared, cmap='viridis')
 
     # Diff: symmetric range around 0 with diverging colormap
     diff_abs = float(np.nanmax(np.abs(diff))) if np.isfinite(diff).any() else 1.0
@@ -378,11 +412,11 @@ def plots(outdir: str, X: np.ndarray, Y: np.ndarray, Z_npz: np.ndarray, Z_vtu: n
     # Combined subplot (1x3): NPZ | VTU | Diff
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5), constrained_layout=True)
     im0 = axes[0].imshow(Z_npz, origin='lower', aspect='equal', extent=extent, vmin=vmin_shared, vmax=vmax_shared, cmap='viridis')
-    axes[0].set_title(f"NPZ: {field_npz}")
+    axes[0].set_title(f"(GT - Rim) NPZ: {field_npz}")
     im1 = axes[1].imshow(Z_vtu, origin='lower', aspect='equal', extent=extent, vmin=vmin_shared, vmax=vmax_shared, cmap='viridis')
-    axes[1].set_title(f"VTU→grid: {field_vtu}")
+    axes[1].set_title(f"(CFD - Alp) VTU→grid: {field_vtu}")
     im2 = axes[2].imshow(diff, origin='lower', aspect='equal', extent=extent, vmin=-diff_abs, vmax=diff_abs, cmap='coolwarm')
-    axes[2].set_title("Diff (VTU - NPZ)")
+    axes[2].set_title("Diff (GT - CFD)")
     # Colorbars
     fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
     fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
@@ -393,35 +427,120 @@ def plots(outdir: str, X: np.ndarray, Y: np.ndarray, Z_npz: np.ndarray, Z_vtu: n
     return mse, rel_mse, rmse_pct
 
 
-def main():
-    p = argparse.ArgumentParser(description="Compare VTU field with NPZ field.")
-    p.add_argument("--vtu", default=None)
-    p.add_argument("--vtu-field", default=None)
-    p.add_argument("--npz", default=None)
-    p.add_argument("--npz-field", default=None)
-    p.add_argument("--out", default=None)
-    p.add_argument("--mapping", choices=["auto","npz","vtu"], default=None, help="How to build NPZ grid: use NPZ coords, VTU bounds, or auto-detect")
-    p.add_argument("--npz-y-origin", choices=["top","bottom"], default=None, help="Treat NPZ row 0 as 'top' (image) or 'bottom' (math)")
-    p.add_argument("--outside-value", type=float, default=None, help="Value to assign outside the VTU mesh domain on the grid (default 0)")
-    p.add_argument("--mode", choices=["auto","single","batch"], default=None, help="Run a single case, batch over roots, or auto-detect")
-    p.add_argument("--no-clean", action="store_true", help="Do not delete existing output folder(s) before writing")
-    # Batch mode options
-    p.add_argument("--vtu-root", default=None, help="Root folder to search for VTU cases (recursively, looking for flow.vtu)")
-    p.add_argument("--npz-root", default=None, help="Root folder to search for NPZ files (recursively, .npz)")
-    p.add_argument("--out-root", default="postprocess_outputs/compare_batch", help="Output root for batch results (each case gets its own folder)")
-    p.add_argument("--summary-csv", default="postprocess_outputs/compare_batch_summary.csv", help="CSV file to write per-case MSE summary")
-    args = p.parse_args()
+def extract_line_profile(
+    outdir: str,
+    X: np.ndarray,
+    Y: np.ndarray,
+    Z_npz: np.ndarray,
+    Z_vtu: np.ndarray,
+    row_index: Optional[int] = None,
+    y_value: Optional[float] = None,
+    normalize: bool = False,
+    field_label: str = "density",
+) -> Optional[str]:
+    """Extract a horizontal line (constant y) profile from NPZ & VTU-on-grid arrays.
 
-    vtu = args.vtu or DEFAULT_VTU
-    vtu_field = args.vtu_field or DEFAULT_VTU_FIELD
-    npz = args.npz or DEFAULT_NPZ
-    npz_field = args.npz_field or DEFAULT_NPZ_FIELD
-    out = args.out or DEFAULT_OUT
-    mapping_mode = args.mapping or DEFAULT_MAPPING_MODE
-    npz_y_origin = args.npz_y_origin or DEFAULT_NPZ_Y_ORIGIN
-    outside_value = args.outside_value if args.outside_value is not None else 0.0
-    mode = args.mode or DEFAULT_MODE
-    clean = DEFAULT_CLEAN and (not args.no_clean)
+    Priority: if row_index provided use it (0-based). Else if y_value provided use closest row.
+    Saves CSV (x, npz, vtu) and plot. Returns path to CSV or None if not extracted.
+    """
+    if row_index is None and y_value is None:
+        return None
+    ny, nx = Z_npz.shape
+    # Determine row index
+    if row_index is None:
+        # pick closest y
+        y_arr = Y[:, 0]  # consistent across row
+        j = int(np.argmin(np.abs(y_arr - float(y_value))))
+    else:
+        j = int(row_index)
+    if j < 0 or j >= ny:
+        print(f"[LINE] Row index {j} out of range (0..{ny-1}); skipping line extraction")
+        return None
+    # Extract arrays
+    x_line = X[j, :].astype(float)
+    npz_line = Z_npz[j, :].astype(float)
+    vtu_line = Z_vtu[j, :].astype(float)
+    # Normalization (by max of NPZ line) if requested and max>0
+    if normalize:
+        ref = np.nanmax(npz_line)
+        if np.isfinite(ref) and ref != 0:
+            npz_line = npz_line / ref
+            vtu_line = vtu_line / ref
+    # Prepare output
+    line_dir = os.path.join(outdir, "lines")
+    os.makedirs(line_dir, exist_ok=True)
+    y_sel = float(Y[j, 0])
+    csv_path = os.path.join(line_dir, f"line_yindex_{j}_y_{y_sel:.6g}.csv")
+    header = "x,npz,vtu"
+    arr = np.column_stack([x_line, npz_line, vtu_line])
+    np.savetxt(csv_path, arr, delimiter=",", header=header, comments="")
+    # Plot
+    plt.figure(figsize=(6.0, 4.2))
+    plt.plot(x_line, vtu_line, label="VTU", color="#ff7f0e", linewidth=1.1)
+    plt.plot(x_line, npz_line, label="NPZ", color="#1f77b4", linewidth=1.4, linestyle="--")
+    plt.xlabel("x-position")
+    yl = f"{('Norm. ' if normalize else '')}{field_label}" if field_label else ("Norm. value" if normalize else "Value")
+    plt.ylabel(yl)
+    plt.title(f"Line profile at y = {y_sel:.4g} (row {j})")
+    plt.legend(frameon=True)
+    plt.tight_layout()
+    plot_path = os.path.join(line_dir, f"line_yindex_{j}_y_{y_sel:.6g}.png")
+    plt.savefig(plot_path, dpi=220)
+    plt.close()
+    # Log
+    with open(os.path.join(line_dir, "lines_readme.txt"), "a") as f:
+        f.write(f"y_index={j}, y_value={y_sel:.9g}, csv={os.path.basename(csv_path)}, plot={os.path.basename(plot_path)}\n")
+    print(f"[LINE] Saved line profile -> {csv_path}")
+    return csv_path
+
+
+def main():
+    if USE_INTERNAL_CONFIG:
+        class _Args:  # simple namespace
+            pass
+        args = _Args()
+        for k, v in CONFIG.items():
+            setattr(args, k, v)
+        # mimic argparse flag for --no-clean
+        setattr(args, 'no_clean', (not CONFIG.get('clean', True)))
+        print("[INFO] Running with internal CONFIG (edit CONFIG dict near top of file).")
+    else:
+        p = argparse.ArgumentParser(description="Compare VTU field with NPZ field.")
+        p.add_argument("--vtu", default=None)
+        p.add_argument("--vtu-field", default=None)
+        p.add_argument("--npz", default=None)
+        p.add_argument("--npz-field", default=None)
+        p.add_argument("--out", default=None)
+        p.add_argument("--mapping", choices=["auto","npz","vtu"], default=None, help="How to build NPZ grid: use NPZ coords, VTU bounds, or auto-detect")
+        p.add_argument("--npz-y-origin", choices=["top","bottom"], default=None, help="Treat NPZ row 0 as 'top' (image) or 'bottom' (math)")
+        p.add_argument("--outside-value", type=float, default=None, help="Value to assign outside the VTU mesh domain on the grid (default 0)")
+        p.add_argument("--mode", choices=["auto","single","batch"], default=None, help="Run a single case, batch over roots, or auto-detect")
+        p.add_argument("--no-clean", action="store_true", help="Do not delete existing output folder(s) before writing")
+        # Batch mode options
+        p.add_argument("--vtu-root", default=None, help="Root folder to search for VTU cases (recursively, looking for flow.vtu)")
+        p.add_argument("--npz-root", default=None, help="Root folder to search for NPZ files (recursively, .npz)")
+        p.add_argument("--out-root", default="postprocess_outputs/compare_batch", help="Output root for batch results (each case gets its own folder)")
+        p.add_argument("--summary-csv", default="postprocess_outputs/compare_batch_summary.csv", help="CSV file to write per-case MSE summary")
+        # Line extraction options
+        p.add_argument("--line-row", type=int, default=None, help="Row index (0-based) for horizontal line extraction (constant y)")
+        p.add_argument("--line-y", type=float, default=None, help="Physical y-value for horizontal line extraction (closest row is used)")
+        p.add_argument("--line-normalize", action="store_true", help="Normalize line values by max of NPZ line (for comparative plotting)")
+        p.add_argument("--density-normalize-mode", choices=["max","mean"], default=None, help="When density normalization enabled: choose reference as max or mean (ignored if explicit ref configured)")
+        args = p.parse_args()
+
+    vtu = getattr(args,'vtu',None) or DEFAULT_VTU
+    vtu_field = getattr(args,'vtu_field',None) or DEFAULT_VTU_FIELD
+    npz = getattr(args,'npz',None) or DEFAULT_NPZ
+    npz_field = getattr(args,'npz_field',None) or DEFAULT_NPZ_FIELD
+    out = getattr(args,'out',None) or DEFAULT_OUT
+    mapping_mode = getattr(args,'mapping',None) or DEFAULT_MAPPING_MODE
+    npz_y_origin = getattr(args,'npz_y_origin',None) or DEFAULT_NPZ_Y_ORIGIN
+    outside_value = getattr(args,'outside_value',None) if getattr(args,'outside_value',None) is not None else 0.0
+    mode = getattr(args,'mode',None) or DEFAULT_MODE
+    if USE_INTERNAL_CONFIG:
+        clean = bool(CONFIG.get('clean', True))
+    else:
+        clean = DEFAULT_CLEAN and (not getattr(args,'no_clean',False))
 
     def normalize_case_key(name: str) -> str:
         # Strip extension and take last path component
@@ -436,6 +555,10 @@ def main():
         # Normalize
         base = base.strip().lower()
         return base
+
+    line_row = getattr(args,'line_row',None)
+    line_y = getattr(args,'line_y',None)
+    line_norm = bool(getattr(args,'line_normalize',False))
 
     def run_one(vtu_path: str, npz_path: str, outdir: str) -> Tuple[float, float, float]:
         # Load VTU first for bounds
@@ -456,7 +579,57 @@ def main():
             tri_ids = finder(X, Y)
             inside_mask = tri_ids != -1
         Z_vtu = interpolate_to_grid(pts, vals, X, Y, inside_mask=inside_mask, outside_value=outside_value)
+
+        # -----------------------------
+        # Optional global density normalization
+        # -----------------------------
+        density_normalize = CONFIG.get('density_normalize', False) if 'CONFIG' in globals() else False
+        density_normalize_ref = CONFIG.get('density_normalize_ref', None) if 'CONFIG' in globals() else None
+        density_normalize_mode = (CONFIG.get('density_normalize_mode','max') if 'CONFIG' in globals() else 'max')
+        # CLI override (only if not using internal config ref and user supplied mode)
+        if not USE_INTERNAL_CONFIG:
+            cli_mode = getattr(args,'density_normalize_mode',None)
+            if cli_mode:
+                density_normalize_mode = cli_mode
+        field_is_density = npz_field.lower() in ("density", "rho")
+        applied_norm_ref = None
+        if density_normalize and field_is_density:
+            if density_normalize_ref is None:
+                if density_normalize_mode == 'mean':
+                    ref_candidate = np.nanmean(Z_npz)
+                else:
+                    ref_candidate = np.nanmax(Z_npz)
+                if not np.isfinite(ref_candidate) or ref_candidate == 0:
+                    ref_candidate = 1.0
+                applied_norm_ref = ref_candidate
+            else:
+                applied_norm_ref = float(density_normalize_ref)
+                if applied_norm_ref == 0:
+                    applied_norm_ref = 1.0
+            Z_npz = Z_npz / applied_norm_ref
+            Z_vtu = Z_vtu / applied_norm_ref
+            # Inform user
+            print(f"[NORM] Density normalized by {('explicit ref' if density_normalize_ref is not None else density_normalize_mode)} value {applied_norm_ref:.6g}")
+            plot_field_label_npz = f"Norm. {npz_field}"
+        else:
+            plot_field_label_npz = npz_field
+
         mse, rel_mse, rmse_pct = plots(outdir, X, Y, Z_npz, Z_vtu, npz_field, vtu_key)
+        # Optional line extraction
+        try:
+            extract_line_profile(
+                outdir,
+                X,
+                Y,
+                Z_npz,
+                Z_vtu,
+                row_index=line_row,
+                y_value=line_y,
+                normalize=line_norm,
+                field_label=plot_field_label_npz,
+            )
+        except Exception as e:
+            print(f"[LINE][WARN] Could not extract line profile: {e}")
         return mse, rel_mse, rmse_pct
 
     # Resolve roots with defaults (batch mode)

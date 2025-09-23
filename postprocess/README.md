@@ -128,3 +128,47 @@ Notes
 - Warnings like “VTU file corrupt… Velocity … doesn’t fit components 3” come from meshio when vector arrays are inconsistent. We skip those arrays; density/pressure extraction still works.
 - To keep outside-domain areas from influencing the color scale, run with `--outside-value nan`.
 - Case-key pairing normalizes names (e.g., converts `0p011` → `0.011` and trims `_interpolated_arrays` suffix) to match NPZ files.
+
+### NEW: Vertical Line Density (or Field) Profile Extraction
+
+You can now extract a vertical line (constant y) profile from the comparison grid for both the NPZ and the VTU-interpolated field.
+
+Flags:
+```bash
+   --line-y-index <int>    # Row index (0 = lowest y after orientation handling)
+   --line-y-coord <float>  # Physical y coordinate (linear interpolation between rows)
+   --line-name <str>       # Base name for output files (default: vertical_profile)
+```
+
+Usage examples:
+```bash
+# Using a physical coordinate (preferred when you know the geometry y)
+python postprocess/main_compare_vtu_npz.py \
+   --mode single \
+   --vtu <path>/flow.vtu \
+   --npz <path>/your_arrays.npz \
+   --vtu-field Density \
+   --npz-field density \
+   --line-y-coord 0.015   \
+   --line-name density_y0015 \
+   --out postprocess_outputs/compare_single
+
+# Using a row index
+python postprocess/main_compare_vtu_npz.py --mode single --line-y-index 10 --line-name test_line
+```
+
+Outputs (single case or per batch case directory):
+- `<line-name>.csv` with columns:
+   - `x, npz_value, vtu_value, y_used, idx_used`
+   - `y_used` is the interpolated physical y actually sampled.
+   - `idx_used` is the lower row index used (for interpolation reference).
+- `<line-name>.png` line plot comparing NPZ vs VTU→grid along x.
+
+Behavior:
+- If both `--line-y-index` and `--line-y-coord` are supplied, the coordinate takes precedence.
+- Coordinate-based extraction performs linear interpolation between the two bracketing rows (both for NPZ and VTU-on-grid arrays) to ensure aligned sampling.
+- If the requested coordinate lies outside the grid bounds, an error file `<line-name>_error.txt` is written instead.
+
+Tips:
+- Use `--npz-y-origin top` (default) or `bottom` consistently when interpreting indices. Changing origin flips the vertical orientation before extraction.
+- For multiple profiles, you can run the script repeatedly or extend it to accept a comma-separated list (future enhancement).

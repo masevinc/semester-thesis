@@ -18,10 +18,14 @@ DO_EVAL_VIZ = True   # If True: produce evaluation overlays after extraction
 VIZ_ALL_CASES = True # If True: visualize every extracted case; if False: only first
 MAX_VIZ_CASES = None # Optional int limit (e.g., 50) when VIZ_ALL_CASES True; None = no limit
 DO_MESH = True      # If True: proceed to mesh & sweep stage (requires gmsh). False = extraction + viz only
-SAMPLE_SIZE = 3     # Only used if USE_RANDOM=True (or legacy if left True with value)
-RANDOM_SEED = 45
+SAMPLE_SIZE = 50     # Only used if USE_RANDOM=True (or legacy if left True with value)
+RANDOM_SEED = 87
 MESH_FORMAT = 'su2'  # choose among: 'msh', 'su2', 'cgns'
 WRITE_LOCAL_SWEEP_SCRIPT = True  # new: create run_all_local.sh for sequential local execution
+
+# Mesh resolution controls (threaded through to mesh generator)
+VERTICAL_NODES = 201
+HORIZONTAL_TARGET_NODES = 521  # total nodes along each top/bottom chain target (will be proportionally split)
 
 DATA_DIR = "./double_ramp_configuration/inputs/double_ramp_npz_files_clamped"
 POINTS_DIR = "./double_ramp_configuration/outputs/backward/extracted_points"
@@ -78,6 +82,7 @@ if DO_EVAL_VIZ:
             points_dir=POINTS_DIR,
             output_dir=viz_out_dir,
             physical_height=_phys_height,
+            physical_width=_phys_width,
             data_key="temperature",
             max_cases=MAX_VIZ_CASES
         )
@@ -87,6 +92,7 @@ if DO_EVAL_VIZ:
             points_dir=POINTS_DIR,
             output_dir=viz_out_dir,
             physical_height=_phys_height,
+            physical_width=_phys_width,
             data_key="temperature",
             figure_name="first_case_overlay"
         )
@@ -114,7 +120,9 @@ if DO_MESH:
             sweep_clear_output_before_run=True,
             sweep_write_master_slurm_script=True,
             mesh_format=MESH_FORMAT,
-            sweep_write_master_local_script=WRITE_LOCAL_SWEEP_SCRIPT
+            sweep_write_master_local_script=WRITE_LOCAL_SWEEP_SCRIPT,
+            vertical_nodes=VERTICAL_NODES,
+            horizontal_target_nodes=HORIZONTAL_TARGET_NODES,
         )
 else:
     print("[main] DO_MESH=False -> Skipping mesh + sweep stage (extraction + evaluation only).")

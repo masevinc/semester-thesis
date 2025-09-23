@@ -133,12 +133,18 @@ def extract_points_batch(
             try:
                 npz_path = os.path.join(data_dir, fname)
                 image_np = extract_image_from_array(npz_path, data_key=key)
-                points = process_image_from_array(
+                # Derive base name for debug imagery
+                name_no_ext = os.path.splitext(fname)[0]
+                points, debug = process_image_from_array(
                     image_np,
                     physical_domain_height=physical_height,
-                    physical_domain_width=physical_width
+                    physical_domain_width=physical_width,
+                    return_debug=True,
+                    save_debug_dir=output_dir,
+                    save_basename=f"{name_no_ext}_{key}",
+                    save_binary_mask=False,
+                    save_contour_overlay=False,
                 )
-                name_no_ext = os.path.splitext(fname)[0]
                 out_path = os.path.join(output_dir, f"{name_no_ext}_{key}.npy")
                 np.save(out_path, np.array(points))
                 print(f"Saved points to: {out_path}")

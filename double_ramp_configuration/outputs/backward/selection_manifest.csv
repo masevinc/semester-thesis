@@ -1,6 +1,0 @@
-# Selection manifest generated at UTC: 2025-09-22T14:06:37.267970
-# enable_random_sampling=True, sample_size=3, random_seed=45, total_matches=3976, final_count=3
-# Columns: filename,ramp1,ramp2,ma,pres
-double_ramp_0.0443_0.0677_ma_5.163_pres_108345_interpolated_arrays.npz,0.0443,0.0677,5.163,108345
-double_ramp_0.0491_0.0254_ma_3.506_pres_113826_interpolated_arrays.npz,0.0491,0.0254,3.506,113826
-double_ramp_0.0199_0.0465_ma_6.671_pres_141047_interpolated_arrays.npz,0.0199,0.0465,6.671,141047

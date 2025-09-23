@@ -61,6 +61,17 @@ After toggling, regenerate a few point sets and open one of the visualization ov
 ratio should now reflect the rectangular scaling when you interpret the axes numerically (e.g., x
 limits extend to ~0.62 while y to ~0.40).
 
+Visualization with Rectangular Domains
+--------------------------------------
+The visualization utilities (`visualize_first_extracted_case`, `visualize_all_extracted_cases`) now
+accept an optional `physical_width` argument. When supplied, the background field is plotted with
+extent `[0, physical_width]` in x and `[0, physical_height]` in y. Figure size is adjusted to keep
+roughly the same longest dimension so images remain comparable across aspect ratios.
+
+If you forget to pass `physical_width`, the plot will default to a square extent (legacy), and your
+scaled points (with x up to 0.62) will appear compressed relative to the background. Always pass
+both height & width together when rectangular scaling is active in extraction.
+
 Aggressive 2nd Point (Ramp Start) Detection
 -------------------------------------------
 The extraction pipeline now includes an aggressive strategy to precisely capture the second geometric point: the end of the initial flat (plateau) before the first ramp begins. This point is critical for correctly defining the ramp geometry.

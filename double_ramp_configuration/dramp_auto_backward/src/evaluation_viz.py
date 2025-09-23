@@ -73,6 +73,7 @@ def visualize_first_extracted_case(
     points_dir: str,
     output_dir: str,
     physical_height: float,
+    physical_width: float | None = None,
     data_key: str = 'density',
     figure_name: str = 'evaluation_overlay',
     cmap: str = 'viridis',
@@ -91,7 +92,9 @@ def visualize_first_extracted_case(
     output_dir : str
         Target directory where the visualization PNG and CSV copy will be stored.
     physical_height : float
-        Physical height scaling used during extraction (must match to interpret points).
+        Physical height scaling (y-direction) used during extraction.
+    physical_width : float | None, default None
+        Physical width scaling (x-direction). If None assumes square domain (width == height).
     data_key : str, default 'density'
         The array key used during extraction (needed to reconstruct original filename).
     figure_name : str, default 'evaluation_overlay'
@@ -141,11 +144,22 @@ def visualize_first_extracted_case(
     if flip_vertical:
         field = np.flipud(field)
 
-    # Background: show raw field with physical coordinates (square domain assumption).
-    extent = [0.0, physical_height, 0.0, physical_height]
+    # Determine width (square legacy behavior if not specified)
+    if physical_width is None:
+        physical_width = physical_height
+
+    # Background extent reflects rectangular domain if provided.
+    extent = [0.0, physical_width, 0.0, physical_height]
 
     _ensure_dir(output_dir)
-    fig, ax = plt.subplots(figsize=(6.2, 6.2), dpi=120)
+    # Adjust figure aspect: keep ~6.2 units for the longer side for consistency
+    base = 6.2
+    aspect_ratio = physical_width / physical_height if physical_height > 0 else 1.0
+    if aspect_ratio >= 1:  # wider than tall
+        figsize = (base, base / aspect_ratio)
+    else:  # taller than wide (unlikely here)
+        figsize = (base * aspect_ratio, base)
+    fig, ax = plt.subplots(figsize=figsize, dpi=120)
     im = ax.imshow(field, cmap=cmap, origin='lower', extent=extent, aspect='equal')
     cb = fig.colorbar(im, ax=ax, shrink=0.85, pad=0.02)
     cb.ax.tick_params(labelsize=8)
@@ -155,13 +169,15 @@ def visualize_first_extracted_case(
         if pts.ndim == 2 and pts.shape[1] == 2:
             ax.scatter(pts[:, 0], pts[:, 1], c='red', s=point_size, edgecolors='white', linewidths=0.7, label='Extracted Points')
             for i, (x, y) in enumerate(pts):
-                ax.text(x + 0.012 * physical_height, y + 0.012 * physical_height, str(i + 1), color='white', fontsize=7, ha='left', va='bottom')
+                # offset scaled relative to smaller dimension for readability
+                offset = 0.012 * min(physical_height, physical_width)
+                ax.text(x + offset, y + offset, str(i + 1), color='white', fontsize=7, ha='left', va='bottom')
         else:
             print(f"[evaluation_viz] Unexpected points array shape: {pts.shape}")
 
     # Add small margin to make edge points easier to see
-    margin = margin_frac * physical_height
-    ax.set_xlim(-margin, physical_height + margin)
+    margin = margin_frac * max(physical_height, physical_width)
+    ax.set_xlim(-margin, physical_width + margin)
     ax.set_ylim(-margin, physical_height + margin)
     ax.set_xlabel('x (physical)')
     ax.set_ylabel('y (physical)')
@@ -202,6 +218,7 @@ def visualize_all_extracted_cases(
     points_dir: str,
     output_dir: str,
     physical_height: float,
+    physical_width: float | None = None,
     data_key: str = 'density',
     cmap: str = 'viridis',
     flip_vertical: bool = True,
@@ -259,18 +276,29 @@ def visualize_all_extracted_cases(
         if flip_vertical:
             field = np.flipud(field)
 
-        extent = [0.0, physical_height, 0.0, physical_height]
+            if physical_width is None:
+                pw = physical_height
+            else:
+                pw = physical_width
+            extent = [0.0, pw, 0.0, physical_height]
 
-        fig, ax = plt.subplots(figsize=(6.2, 6.2), dpi=120)
+        aspect_ratio = (pw / physical_height) if physical_height > 0 else 1.0
+        base = 6.2
+        if aspect_ratio >= 1:
+            figsize = (base, base / aspect_ratio)
+        else:
+            figsize = (base * aspect_ratio, base)
+        fig, ax = plt.subplots(figsize=figsize, dpi=120)
         ax.imshow(field, cmap=cmap, origin='lower', extent=extent, aspect='equal')
         if scaled_points.size > 0:
             pts = np.asarray(scaled_points)
             if pts.ndim == 2 and pts.shape[1] == 2:
                 ax.scatter(pts[:, 0], pts[:, 1], c='red', s=point_size, edgecolors='white', linewidths=0.7)
                 for i, (x, y) in enumerate(pts):
-                    ax.text(x + 0.012 * physical_height, y + 0.012 * physical_height, str(i + 1), color='white', fontsize=7, ha='left', va='bottom')
-        margin = margin_frac * physical_height
-        ax.set_xlim(-margin, physical_height + margin)
+                    offset = 0.012 * min(physical_height, pw)
+                    ax.text(x + offset, y + offset, str(i + 1), color='white', fontsize=7, ha='left', va='bottom')
+        margin = margin_frac * max(physical_height, pw)
+        ax.set_xlim(-margin, pw + margin)
         ax.set_ylim(-margin, physical_height + margin)
         ax.set_xlabel('x (physical)')
         ax.set_ylabel('y (physical)')

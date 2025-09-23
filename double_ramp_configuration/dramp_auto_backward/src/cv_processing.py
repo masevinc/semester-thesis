@@ -7,6 +7,7 @@ cv_processing.py
 """
 
 import re
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
@@ -169,7 +170,16 @@ def extract_image_from_array(npz_path, data_key, return_raw: bool = False):
     return image_np
 
 
-def process_image_from_array(image_array, physical_domain_height=1.0, physical_domain_width=None, return_debug: bool = False):
+def process_image_from_array(
+    image_array,
+    physical_domain_height=1.0,
+    physical_domain_width=None,
+    return_debug: bool = False,
+    save_debug_dir: str | None = None,
+    save_basename: str | None = None,
+    save_binary_mask: bool = False,
+    save_contour_overlay: bool = False,
+):
     """Extract and scale key geometric points from an image array.
 
     Parameters
@@ -187,10 +197,27 @@ def process_image_from_array(image_array, physical_domain_height=1.0, physical_d
         intermediate data required for visualization. If False (default) maintains
         legacy behavior returning only the list of scaled points.
 
+        Additional optional save outputs (when save_debug_dir provided):
+            * Binary mask PNG: ramp (solid) region black (0), flow field white (255) -> '<basename>_binary_mask.png' (now uses clean filled polygon to avoid wavy edges)
+            * Contour overlay PNG: JUST the flow field (no lines/points) scaled to physical aspect ratio -> '<basename>_contour.png'
+
+    Parameters (new)
+    ----------------
+    save_debug_dir : str | None
+        If provided, directory where optional debug PNGs will be written.
+    save_basename : str | None
+        Base filename (without extension) used when saving debug PNGs. If None and saving
+        requested, a ValueError is raised.
+    save_binary_mask : bool
+        Write binary mask PNG (ramp black, flow white) if True and save_debug_dir given.
+    save_contour_overlay : bool
+        Write overlay visualization if True and save_debug_dir given.
+
     Returns
     -------
     list[(float, float)] or (list[(float,float)], dict)
-        Scaled points (and optionally debug info when return_debug=True).
+        Scaled points (and optionally debug info when return_debug=True). Debug dict now
+        also contains 'binary_mask' when return_debug=True.
     """
     # --- Preprocessing: Convert to grayscale and apply median blur ---
     image = image_array.copy()
@@ -199,13 +226,24 @@ def process_image_from_array(image_array, physical_domain_height=1.0, physical_d
 
     # --- Thresholding to create binary mask ---
     threshold_value = 30  # Adjust as needed for your images
-    _, binary_mask = cv2.threshold(blurred, threshold_value, 255, cv2.THRESH_BINARY_INV)
+    _, binary_mask_raw = cv2.threshold(blurred, threshold_value, 255, cv2.THRESH_BINARY_INV)
+
+    # We want ramp BLACK (0) and flow WHITE (255).
+    # Create a clean polygon fill (avoid waviness from threshold noise):
+    #   1) Use the largest contour (from binary_mask_raw) but draw filled onto blank mask.
+    #   2) Invert to achieve ramp=0, flow=255.
+    binary_mask = None  # placeholder until contour extracted
 
     # --- Find the largest contour (assumed to be the wedge) ---
-    contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(binary_mask_raw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         raise RuntimeError("No contours found in the image.")
     wedge_contour = max(contours, key=cv2.contourArea)
+    # Build crisp mask
+    h, w = binary_mask_raw.shape
+    crisp = np.full((h, w), 255, dtype=np.uint8)  # start all white (flow)
+    cv2.drawContours(crisp, [wedge_contour], -1, color=0, thickness=-1)  # filled ramp black
+    binary_mask = crisp
 
     # --- Approximate the contour to a polygon ---
     epsilon = 0.00235 * cv2.arcLength(wedge_contour, True)
@@ -354,10 +392,11 @@ def process_image_from_array(image_array, physical_domain_height=1.0, physical_d
 
     debug = {
         "image_rgb": image_array,  # original rendered RGB image
-    "scale_x": scale_x,
-    "scale_y": scale_y,
-    "physical_domain_height": physical_domain_height,
-    "physical_domain_width": physical_domain_width,
+        "binary_mask": binary_mask,  # 0 = ramp, 255 = flow
+        "scale_x": scale_x,
+        "scale_y": scale_y,
+        "physical_domain_height": physical_domain_height,
+        "physical_domain_width": physical_domain_width,
         "left_lower": tuple(left_lower.tolist()),
         "left_upper": tuple(left_upper.tolist()),
         "right_lower": tuple(right_lower.tolist()),
@@ -371,5 +410,33 @@ def process_image_from_array(image_array, physical_domain_height=1.0, physical_d
             "interpolate": AGGR_INTERPOLATE,
         }
     }
+
+    # Optional saving of debug images
+    if save_debug_dir and (save_binary_mask or save_contour_overlay):
+        if not save_basename:
+            raise ValueError("save_basename must be provided when saving debug images")
+        os.makedirs(save_debug_dir, exist_ok=True)
+        # Determine aspect scaling for saving so that pixel width reflects physical width ratio.
+        # If physical width differs from height we rescale horizontally.
+        aspect_scale = 1.0
+        if physical_domain_width is not None and physical_domain_height is not None and physical_domain_height > 0:
+            aspect_scale = physical_domain_width / physical_domain_height
+
+        def _rescale_width(img):
+            if aspect_scale == 1.0:
+                return img
+            new_w = max(1, int(round(img.shape[1] * aspect_scale)))
+            return cv2.resize(img, (new_w, img.shape[0]), interpolation=cv2.INTER_NEAREST)
+
+        if save_binary_mask:
+            mask_path = os.path.join(save_debug_dir, f"{save_basename}_binary_mask.png")
+            cv2.imwrite(mask_path, _rescale_width(binary_mask))
+        if save_contour_overlay:
+            # Plain flow field image (no points / lines) scaled to aspect
+            base_field = image_array
+            # Convert to BGR for writing
+            plain = cv2.cvtColor(base_field, cv2.COLOR_RGB2BGR)
+            plain_path = os.path.join(save_debug_dir, f"{save_basename}_contour.png")
+            cv2.imwrite(plain_path, _rescale_width(plain))
     return scaled_points, debug
 
