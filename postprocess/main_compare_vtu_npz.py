@@ -25,14 +25,18 @@ from typing import List, Optional, Tuple, Dict
 import csv
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.tri import Triangulation
+from pathlib import Path
+import random
+
+# Try optional umap import later inside function (lazy) to avoid hard dependency
 
 
 # Defaults
 DEFAULT_MAPPING_MODE = "auto"  # 'auto' | 'npz' | 'vtu'
 DEFAULT_NPZ_Y_ORIGIN = "top"    # 'top' (image-style, like your main code) or 'bottom' (math-style)
 # for batch mode
-DEFAULT_VTU_ROOT = "double_ramp_configuration/outputs/backward/sweep"
-DEFAULT_NPZ_ROOT = "double_ramp_configuration/inputs/double_ramp_npz_files_clamped"
+DEFAULT_VTU_ROOT = "/Users/alperensevinc/Desktop/su2/su2_alp/DDPM_pipeline_results/fullyDDPM/backward/sweep"
+DEFAULT_NPZ_ROOT = "double_ramp_configuration/inputs/denorm/DDPM_fully"
 # for single mode
 DEFAULT_VTU = "double_ramp_configuration/outputs/backward/sweep/double_ramp_0p011_0p0488_ma_2p892_pres_199070_interpolated_arrays_density_M2p892_T300p0_P199070p0/flow.vtu"
 DEFAULT_NPZ = "double_ramp_configuration/inputs/double_ramp_npz_files_clamped/double_ramp_0.011_0.0488_ma_2.892_pres_199070_interpolated_arrays.npz"
@@ -45,6 +49,20 @@ DEFAULT_OUT = "postprocess_outputs/compare_auto"
 DEFAULT_MODE = "batch"  # 'auto' | 'single' | 'batch'
 DEFAULT_CLEAN = True    # remove target output folder(s) before writing
 
+# Embedding (density field) defaults (three legend groups: fully-DDPM, Ground Truth (merged), semi-DDPM)
+DEFAULT_FULLY_GT_ROOT = "/Users/alperensevinc/Desktop/su2/su2_alp/DDPM_pipeline_results/fullyDDPM/backward/sweep"
+DEFAULT_SEMI_GT_ROOT = "/Users/alperensevinc/Desktop/su2/su2_alp/DDPM_pipeline_results/semiDDPM/backward/sweep"
+DEFAULT_FULLY_GEN_ROOT = "double_ramp_configuration/inputs/denorm/DDPM_fully"
+DEFAULT_SEMI_GEN_ROOT = "double_ramp_configuration/inputs/denorm/DDPM_semi"
+DEFAULT_EMBED_OUT = "postprocess_outputs/density_embedding"
+DEFAULT_EMBED_MAX_PER_GROUP = 1000  # cap samples per logical group (after merge of GT)
+DEFAULT_EMBED_STRIDE = 1            # spatial downsample stride ( >1 reduces resolution )
+DEFAULT_EMBED_STANDARDIZE = True
+DEFAULT_EMBED_USE_UMAP = False       # if False or UMAP missing -> PCA fallback
+DEFAULT_UMAP_NEIGHBORS = 15
+DEFAULT_UMAP_MIN_DIST = 0.1
+DEFAULT_EMBED_SEED = 42
+
 # ---------------------------------------------------------------------
 # INTERNAL CONFIG BLOCK
 # Set USE_INTERNAL_CONFIG = True to bypass CLI and use CONFIG below.
@@ -52,7 +70,7 @@ DEFAULT_CLEAN = True    # remove target output folder(s) before writing
 USE_INTERNAL_CONFIG = True  # Set True to run with CONFIG block (no CLI needed)
 
 CONFIG = dict(
-    mode=DEFAULT_MODE,              # 'single' | 'batch' | 'auto'
+    mode= DEFAULT_MODE,              # 'single' | 'batch' | 'auto' | 'embed' | DEFAULT_MODE
     # Single case
     vtu=DEFAULT_VTU,
     npz=DEFAULT_NPZ,
@@ -74,14 +92,56 @@ CONFIG = dict(
     line_y=None,            # physical y value (float) alternative to line_row
     line_normalize=False,   # normalize by max NPZ line
     # Global density normalization for plots (divide by reference value)
-    density_normalize=True,        # if True and field is density/rho -> plot normalized
+    density_normalize=False,        # if True and field is density/rho -> plot normalized
     density_normalize_mode="mean", # 'max' | 'mean' (ignored if density_normalize_ref given)
     density_normalize_ref=None,    # if given (float), overrides mode; else use selected mode
+    # Error metric options
+    mre_ref_eps=1e-12,             # exclude |y_true| <= eps from MRE denominator
+    # Embedding section (set mode='embed' to invoke)
+    fully_gen_root=DEFAULT_FULLY_GEN_ROOT,
+    semi_gen_root=DEFAULT_SEMI_GEN_ROOT,
+    fully_gt_root=DEFAULT_FULLY_GT_ROOT,
+    semi_gt_root=DEFAULT_SEMI_GT_ROOT,
+    embed_out=DEFAULT_EMBED_OUT,
+    embed_max_per_group=DEFAULT_EMBED_MAX_PER_GROUP,
+    embed_stride=DEFAULT_EMBED_STRIDE,
+    embed_standardize=DEFAULT_EMBED_STANDARDIZE,
+    embed_use_umap=DEFAULT_EMBED_USE_UMAP,
+    umap_neighbors=DEFAULT_UMAP_NEIGHBORS,
+    umap_min_dist=DEFAULT_UMAP_MIN_DIST,
+    embed_seed=DEFAULT_EMBED_SEED,
 )
 
 
 def _sanitize_key(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def _extract_mach_from_text(*texts: str) -> Optional[float]:
+    """Try to parse a Mach number from given text fragments.
+
+    Supports patterns like: 'M2p892', 'ma_2p892', 'mach_2.892', 'Mach2.9'.
+    Returns float if found, else None.
+    """
+    if not texts:
+        return None
+    patterns = [
+        r"(?i)\bM(?:ach)?[_-]?(\d+p\d+|\d+(?:\.\d+)?)\b",
+        r"(?i)\bma[_-]?(\d+p\d+|\d+(?:\.\d+)?)\b",
+    ]
+    for t in texts:
+        if not t:
+            continue
+        for pat in patterns:
+            m = re.search(pat, t)
+            if m:
+                g = m.group(1)
+                try:
+                    g = g.replace('p', '.')
+                    return float(g)
+                except Exception:
+                    pass
+    return None
 
 
 def candidate_keys(keys: List[str], preferred: str, tokens: Optional[List[str]] = None) -> List[str]:
@@ -394,12 +454,12 @@ def plots(outdir: str, X: np.ndarray, Y: np.ndarray, Z_npz: np.ndarray, Z_vtu: n
         plt.close()
 
     # Use the same vmin/vmax for both field plots
-    save_im(Z_npz, f"(GT - Rim) NPZ: {field_npz}", "GT_npz.png", vmin=vmin_shared, vmax=vmax_shared, cmap='viridis')
-    save_im(Z_vtu, f"(CFD - Alp) VTU→grid: {field_vtu}", "CFD_vtu_on_grid.png", vmin=vmin_shared, vmax=vmax_shared, cmap='viridis')
+    save_im(Z_npz, f"Prior CFD: {field_npz}", "GT_npz.png", vmin=vmin_shared, vmax=vmax_shared, cmap='viridis')
+    save_im(Z_vtu, f"Pipeline CFD: {field_vtu}", "CFD_vtu_on_grid.png", vmin=vmin_shared, vmax=vmax_shared, cmap='viridis')
 
     # Diff: symmetric range around 0 with diverging colormap
     diff_abs = float(np.nanmax(np.abs(diff))) if np.isfinite(diff).any() else 1.0
-    save_im(diff, "Diff (CFD - Diffusion Model)", "diff.png", vmin=-diff_abs, vmax=diff_abs, cmap='coolwarm')
+    save_im(diff, "|ε_rel|", "diff.png", vmin=-diff_abs, vmax=diff_abs, cmap='coolwarm')
 
     with open(os.path.join(outdir, "report.txt"), "w") as f:
         f.write(f"NPZ field: {field_npz}\n")
@@ -412,11 +472,11 @@ def plots(outdir: str, X: np.ndarray, Y: np.ndarray, Z_npz: np.ndarray, Z_vtu: n
     # Combined subplot (1x3): NPZ | VTU | Diff
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5), constrained_layout=True)
     im0 = axes[0].imshow(Z_npz, origin='lower', aspect='equal', extent=extent, vmin=vmin_shared, vmax=vmax_shared, cmap='viridis')
-    axes[0].set_title(f"(GT - Rim) NPZ: {field_npz}")
+    axes[0].set_title("Fully DDPM Output: Density")
     im1 = axes[1].imshow(Z_vtu, origin='lower', aspect='equal', extent=extent, vmin=vmin_shared, vmax=vmax_shared, cmap='viridis')
-    axes[1].set_title(f"(CFD - Alp) VTU→grid: {field_vtu}")
+    axes[1].set_title(f"Pipeline CFD: {field_vtu}")
     im2 = axes[2].imshow(diff, origin='lower', aspect='equal', extent=extent, vmin=-diff_abs, vmax=diff_abs, cmap='coolwarm')
-    axes[2].set_title("Diff (GT - CFD)")
+    axes[2].set_title("|ε_rel|")
     # Colorbars
     fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
     fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
@@ -437,6 +497,8 @@ def extract_line_profile(
     y_value: Optional[float] = None,
     normalize: bool = False,
     field_label: str = "density",
+    mach_number: Optional[float] = None,
+    style_like_sample: bool = True,
 ) -> Optional[str]:
     """Extract a horizontal line (constant y) profile from NPZ & VTU-on-grid arrays.
 
@@ -470,28 +532,443 @@ def extract_line_profile(
     line_dir = os.path.join(outdir, "lines")
     os.makedirs(line_dir, exist_ok=True)
     y_sel = float(Y[j, 0])
-    csv_path = os.path.join(line_dir, f"line_yindex_{j}_y_{y_sel:.6g}.csv")
+    field_slug = _sanitize_key(field_label or "field")
+    csv_path = os.path.join(line_dir, f"{field_slug}_line_yindex_{j}_y_{y_sel:.6g}.csv")
     header = "x,npz,vtu"
     arr = np.column_stack([x_line, npz_line, vtu_line])
     np.savetxt(csv_path, arr, delimiter=",", header=header, comments="")
     # Plot
-    plt.figure(figsize=(6.0, 4.2))
-    plt.plot(x_line, vtu_line, label="VTU", color="#ff7f0e", linewidth=1.1)
-    plt.plot(x_line, npz_line, label="NPZ", color="#1f77b4", linewidth=1.4, linestyle="--")
-    plt.xlabel("x-position")
-    yl = f"{('Norm. ' if normalize else '')}{field_label}" if field_label else ("Norm. value" if normalize else "Value")
+    plt.figure(figsize=(5.6, 5.6))
+    if style_like_sample:
+        # Emulate the clean paper style like the provided sample
+        plt.grid(True, color="#b0b0b0", alpha=0.4, linestyle='-', linewidth=0.8)
+        # CFD (VTU-on-grid): orange solid
+        plt.plot(x_line, vtu_line, label="CFD", color="#ff7f0e", linewidth=1.8)
+        # NPZ (GT): purple dashed
+        plt.plot(x_line, npz_line, label="Fully DDPM", color="#9467bd", linewidth=2.2, linestyle="--")
+    else:
+        plt.plot(x_line, vtu_line, label="VTU", color="#ff7f0e", linewidth=1.1)
+        plt.plot(x_line, npz_line, label="NPZ", color="#1f77b4", linewidth=1.4, linestyle="--")
+    plt.xlabel("x-position (m)")
+    yl = f"{('Norm. ' if normalize else '')}Density (kg/m³)" if field_label else ("Norm. value" if normalize else "Value")
     plt.ylabel(yl)
-    plt.title(f"Line profile at y = {y_sel:.4g} (row {j})")
-    plt.legend(frameon=True)
+    # Title: only field and Mach number
+    if mach_number is not None:
+        title = f"{field_label.capitalize()} (M={mach_number:.3f})"
+    else:
+        title = f"{field_label.capitalize()}"
+    plt.title(title)
+    plt.legend(frameon=True, loc='upper right')
     plt.tight_layout()
-    plot_path = os.path.join(line_dir, f"line_yindex_{j}_y_{y_sel:.6g}.png")
+    plot_path = os.path.join(line_dir, f"{field_slug}_line_yindex_{j}_y_{y_sel:.6g}.png")
     plt.savefig(plot_path, dpi=220)
     plt.close()
     # Log
     with open(os.path.join(line_dir, "lines_readme.txt"), "a") as f:
-        f.write(f"y_index={j}, y_value={y_sel:.9g}, csv={os.path.basename(csv_path)}, plot={os.path.basename(plot_path)}\n")
+        f.write(
+            f"field={field_label}, y_index={j}, y_value={y_sel:.9g}, csv={os.path.basename(csv_path)}, plot={os.path.basename(plot_path)}\n"
+        )
     print(f"[LINE] Saved line profile -> {csv_path}")
     return csv_path
+
+
+# ---------------------------------------------------------------------------
+# Density Embedding (UMAP/PCA) Section
+# ---------------------------------------------------------------------------
+def _gather_npz_files(root: Optional[str]) -> list[Path]:
+    files: list[Path] = []
+    if not root:
+        return files
+    p = Path(root)
+    if not p.exists():
+        print(f"[EMBED][WARN] Root does not exist: {root}")
+        return files
+    for fp in p.rglob("*.npz"):
+        files.append(fp)
+    return files
+
+
+def _load_density_aligned(fp: Path, npz_y_origin: str = "top") -> Optional[np.ndarray]:
+    """Load a density-like array from NPZ and apply the same orientation/alignment
+    conventions used in compare_vtu_npz:
+
+    - Use keys: density/rho (case-insensitive variants)
+    - If x/y coordinate vectors exist, ensure they are 1D, sorted ascending.
+    - If y-origin is 'top', flip vertically so output has Y increasing upward.
+    - Return a 2D array (ny, nx) in canonical orientation (ascending x, ascending y).
+    """
+    try:
+        data = np.load(str(fp), allow_pickle=True)
+    except Exception as e:
+        print(f"[EMBED][WARN] Failed loading NPZ {fp.name}: {e}")
+        return None
+
+    # Locate density field
+    density_key = None
+    for k in ("density", "rho", "Density", "Rho"):
+        if k in data:
+            density_key = k
+            break
+    if density_key is None:
+        return None
+    arr = np.asarray(data[density_key]).astype(float)
+    # Coerce to 2D slice if higher dimensional
+    if arr.ndim > 2:
+        arr = arr[..., 0]
+    if arr.ndim != 2:
+        return None
+
+    ny, nx = arr.shape
+    x = data.get('x', data.get('x_coords', None))
+    y = data.get('y', data.get('y_coords', None))
+
+    # Flip vertically if origin at top (image style) to convert to math-style (y increasing upward)
+    if npz_y_origin.lower() == 'top':
+        arr = np.flipud(arr)
+
+    # Sort axes if coordinate vectors present
+    try:
+        if x is not None:
+            x = np.asarray(x).squeeze()
+            if x.ndim == 1 and x.size == nx:
+                ix = np.argsort(x)
+                if not np.all(ix == np.arange(nx)):
+                    arr = arr[:, ix]
+        if y is not None:
+            y = np.asarray(y).squeeze()
+            if y.ndim == 1 and y.size == ny:
+                iy = np.argsort(y)
+                if not np.all(iy == np.arange(ny)):
+                    arr = arr[iy, :]
+    except Exception:
+        # Non-fatal; continue with raw ordering
+        pass
+    return arr
+
+
+def _downsample(arr: np.ndarray, stride: int) -> np.ndarray:
+    if stride and stride > 1:
+        return arr[::stride, ::stride]
+    return arr
+
+
+def _standardize_matrix(X: np.ndarray) -> np.ndarray:
+    # X shape: (n_samples, n_features)
+    mean = X.mean(axis=0)
+    std = X.std(axis=0)
+    std[std == 0] = 1.0
+    return (X - mean) / std
+
+
+def _pca_2d(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Return (embedding_2d, variance_ratio[2]) using SVD-based PCA.
+
+    Variance ratio is computed as S^2 / sum(S^2) for the first two singular values.
+    """
+    Xc = X - X.mean(axis=0, keepdims=True)
+    try:
+        U, S, Vt = np.linalg.svd(Xc, full_matrices=False)
+    except np.linalg.LinAlgError:
+        U, S, Vt = np.linalg.svd(Xc + 1e-9 * np.random.randn(*Xc.shape), full_matrices=False)
+    comps = U[:, :2] * S[:2]
+    var = (S ** 2)
+    total = var.sum()
+    if total <= 0:
+        var_ratio = np.array([0.0, 0.0])
+    else:
+        var_ratio = var[:2] / total
+    return comps, var_ratio
+
+
+def run_density_embedding(
+    fully_gen_root: Optional[str],
+    semi_gen_root: Optional[str],
+    fully_gt_root: Optional[str],
+    semi_gt_root: Optional[str],
+    out_dir: str,
+    max_per_group: int = 1000,
+    stride: int = 1,
+    standardize: bool = True,
+    use_umap: bool = True,
+    umap_neighbors: int = 15,
+    umap_min_dist: float = 0.1,
+    seed: int = 42,
+    npz_y_origin: str = "top",
+    mapping_mode: str = "auto",
+) -> None:
+    """Create a 2D embedding of density fields across three legend groups.
+
+    Legend groups:
+      1. Fully-conditioned DDPM  (generated)
+      2. Ground Truth (merged fully + semi GT roots)
+      3. Semi-conditioned DDPM  (generated)
+
+    Each NPZ file contributes one sample (flattened density after optional stride).
+    Shapes must match; the most common shape is selected and others are skipped.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    os.makedirs(out_dir, exist_ok=True)
+    log_path = os.path.join(out_dir, "log.txt")
+
+    # Gather generated NPZ files
+    fully_gen_files = _gather_npz_files(fully_gen_root)
+    semi_gen_files = _gather_npz_files(semi_gen_root)
+
+    # Attempt to gather CFD VTU ground truth (flow.vtu) paths; if none found, fallback to NPZ GT roots
+    def _gather_vtu_map(root: Optional[str]) -> dict[str, Path]:
+        mapping: dict[str, Path] = {}
+        if not root:
+            return mapping
+        p = Path(root)
+        if not p.exists():
+            return mapping
+        for vtu in p.rglob('flow.vtu'):
+            case_dir = vtu.parent
+            key = case_dir.name
+            # replicate normalize logic from batch comparison
+            key_norm = re.sub(r"(?<=\d)p(?=\d)", ".", key.lower())
+            idx = key_norm.find('_interpolated_arrays')
+            if idx != -1:
+                key_norm = key_norm[:idx]
+            mapping[key_norm] = vtu
+        return mapping
+
+    fully_vtu_map = _gather_vtu_map(fully_gt_root)
+    semi_vtu_map = _gather_vtu_map(semi_gt_root)
+    vtu_gt_available = (len(fully_vtu_map) + len(semi_vtu_map)) > 0
+
+    if not vtu_gt_available:
+        # Fallback: load NPZ ground truth files (legacy behavior)
+        fully_gt_files = _gather_npz_files(fully_gt_root)
+        semi_gt_files = _gather_npz_files(semi_gt_root)
+        gt_files = fully_gt_files + semi_gt_files
+    else:
+        gt_files = []  # Will be constructed from VTUs aligned to generated samples
+
+    def load_group(files: list[Path], label: str) -> list[tuple[Path, np.ndarray]]:
+        out: list[tuple[Path, np.ndarray]] = []
+        for fp in files:
+            arr = _load_density_aligned(fp, npz_y_origin=npz_y_origin)
+            if arr is None:
+                continue
+            arr = _downsample(arr, stride)
+            out.append((fp, arr))
+        print(f"[EMBED] Loaded {len(out)} density arrays for group '{label}'")
+        return out
+
+    g_fully = load_group(fully_gen_files, "Fully-conditioned DDPM")
+    g_semi = load_group(semi_gen_files, "Semi-conditioned DDPM")
+    if vtu_gt_available:
+        # Build ground truth arrays by pairing each generated NPZ with matching CFD VTU and interpolating
+        g_gt: list[tuple[Path, np.ndarray]] = []
+        def _normalize_key_from_npz(fp: Path) -> str:
+            base = fp.stem.lower()
+            base = re.sub(r"(?<=\d)p(?=\d)", ".", base)
+            idx = base.find('_interpolated_arrays')
+            if idx != -1:
+                base = base[:idx]
+            return base
+
+        # Helper to create ground truth array for one NPZ + VTU pair
+        def _make_gt_array(npz_fp: Path, vtu_path: Path) -> Optional[np.ndarray]:
+            try:
+                # Extract VTU density field and bounds first
+                pts, vals, _ = extract_vtu_field(str(vtu_path), 'Density')
+                xmin, xmax = float(np.nanmin(pts[:,0])), float(np.nanmax(pts[:,0]))
+                ymin, ymax = float(np.nanmin(pts[:,1])), float(np.nanmax(pts[:,1]))
+                # Build NPZ-aligned grid using same helper as comparison (ensures consistent remapping when NPZ coords are normalized)
+                try:
+                    Z_npz_dummy, Xg, Yg = load_npz_grid(
+                        str(npz_fp),
+                        'density' if 'density' in np.load(str(npz_fp)) else ('rho' if 'rho' in np.load(str(npz_fp)) else 'density'),
+                        mapping_mode=mapping_mode,
+                        vtu_bounds=(xmin, xmax, ymin, ymax),
+                        npz_y_origin=npz_y_origin,
+                    )
+                except Exception:
+                    # Fallback simple grid if load_npz_grid fails
+                    data = np.load(str(npz_fp), allow_pickle=True)
+                    field_key = 'density' if 'density' in data else ('rho' if 'rho' in data else list(data.keys())[0])
+                    Znpz = np.asarray(data[field_key])
+                    ny, nx = Znpz.shape[:2]
+                    Xg, Yg = np.meshgrid(np.linspace(xmin, xmax, nx), np.linspace(ymin, ymax, ny))
+                tri = get_vtu_triangulation(str(vtu_path))
+                inside_mask = None
+                if tri is not None:
+                    finder = tri.get_trifinder()
+                    tri_ids = finder(Xg, Yg)
+                    inside_mask = tri_ids != -1
+                Z_vtu_on_grid = interpolate_to_grid(pts, vals, Xg, Yg, inside_mask=inside_mask, outside_value=0.0)
+                if stride and stride > 1:
+                    Z_vtu_on_grid = Z_vtu_on_grid[::stride, ::stride]
+                return Z_vtu_on_grid
+            except Exception as e:
+                print(f"[EMBED][WARN] Ground truth VTU load failed for {vtu_path}: {e}")
+                return None
+
+        # Collect keys from generated groups to attempt pairing
+        for gen_group in (g_fully, g_semi):
+            for fp, _ in gen_group:
+                key = _normalize_key_from_npz(fp)
+                vtu_path = fully_vtu_map.get(key) or semi_vtu_map.get(key)
+                if not vtu_path:
+                    continue
+                gt_arr = _make_gt_array(fp, vtu_path)
+                if gt_arr is not None:
+                    g_gt.append((vtu_path, gt_arr))
+        print(f"[EMBED] Built {len(g_gt)} ground truth CFD arrays from VTU files")
+    else:
+        g_gt = load_group(gt_files, "Ground Truth")
+
+    # Determine most common shape
+    all_shapes = [a.shape for _, a in (g_fully + g_semi + g_gt)]
+    if not all_shapes:
+        print("[EMBED][ERROR] No density arrays loaded; aborting.")
+        return
+    # Frequency map
+    shape_counts: Dict[tuple[int,int], int] = {}
+    for s in all_shapes:
+        shape_counts[s] = shape_counts.get(s, 0) + 1
+    target_shape = max(shape_counts.items(), key=lambda kv: kv[1])[0]
+    print(f"[EMBED] Target shape selected: {target_shape} (most common)")
+
+    def filter_shape(group: list[tuple[Path,np.ndarray]], name: str) -> list[tuple[Path,np.ndarray]]:
+        kept = [(fp, a) for fp, a in group if a.shape == target_shape]
+        dropped = len(group) - len(kept)
+        if dropped:
+            print(f"[EMBED][WARN] Dropped {dropped} samples in '{name}' due to mismatched shape")
+        return kept
+
+    g_fully = filter_shape(g_fully, "Fully-conditioned DDPM")
+    g_semi = filter_shape(g_semi, "Semi-conditioned DDPM")
+    g_gt = filter_shape(g_gt, "Ground Truth")
+
+    # Optional cap per group
+    def cap(group: list[tuple[Path,np.ndarray]], name: str) -> list[tuple[Path,np.ndarray]]:
+        if max_per_group and len(group) > max_per_group:
+            random.shuffle(group)
+            group = group[:max_per_group]
+            print(f"[EMBED] Capped '{name}' to {len(group)} samples")
+        return group
+
+    g_fully = cap(g_fully, "Fully-conditioned DDPM")
+    g_semi = cap(g_semi, "Semi-conditioned DDPM")
+    g_gt = cap(g_gt, "Ground Truth")
+
+    # Build matrices
+    def flatten_group(group: list[tuple[Path,np.ndarray]]) -> tuple[np.ndarray, list[Path]]:
+        if not group:
+            return np.empty((0, target_shape[0]*target_shape[1])), []
+        X = np.stack([a.ravel() for _, a in group], axis=0)
+        files = [fp for fp, _ in group]
+        return X, files
+
+    X_fully, files_fully = flatten_group(g_fully)
+    X_gt, files_gt = flatten_group(g_gt)
+    X_semi, files_semi = flatten_group(g_semi)
+
+    # Concatenate in legend order: fully, gt, semi
+    X_all = np.concatenate([X_fully, X_gt, X_semi], axis=0)
+    labels = (["Fully-conditioned DDPM"] * len(X_fully) +
+              ["Ground Truth"] * len(X_gt) +
+              ["Semi-conditioned DDPM"] * len(X_semi))
+    file_list = files_fully + files_gt + files_semi
+
+    if X_all.shape[0] < 2:
+        print("[EMBED][ERROR] Need at least two samples for embedding.")
+        return
+
+    if standardize:
+        print("[EMBED] Standardizing features (per-pixel)")
+        X_all = _standardize_matrix(X_all)
+
+    method_used = "pca"
+    emb = None
+    pca_var_ratio: Optional[np.ndarray] = None
+    if use_umap:
+        try:
+            import umap  # type: ignore
+            reducer = umap.UMAP(n_components=2, n_neighbors=umap_neighbors, min_dist=umap_min_dist,
+                                 metric='euclidean', random_state=seed)
+            emb = reducer.fit_transform(X_all)
+            method_used = "umap"
+            print("[EMBED] Used UMAP for embedding")
+        except Exception as e:
+            print(f"[EMBED][WARN] UMAP unavailable ({e}); falling back to PCA")
+    if emb is None:
+        emb, pca_var_ratio = _pca_2d(X_all)
+        method_used = "pca"
+        print("[EMBED] Used PCA for embedding")
+
+    # Plot (Component axes are dimensionless latent coordinates: PCA -> linear projections of standardized pixel densities; UMAP -> non-linear manifold coordinates.)
+    plt.figure(figsize=(6.8, 5.4))
+    color_map = {
+        "Fully-conditioned DDPM": "#2ca02c",  # green
+        "Ground Truth": "#1f77b4",            # blue
+        "Semi-conditioned DDPM": "#ff7f0e",    # orange
+    }
+    for lbl in ["Fully-conditioned DDPM", "Ground Truth", "Semi-conditioned DDPM"]:
+        mask = [lbl_candidate == lbl for lbl_candidate in labels]
+        if any(mask):
+            arr = emb[np.array(mask)]
+            plt.scatter(arr[:,0], arr[:,1], s=22, alpha=0.85, label=lbl, color=color_map[lbl], edgecolors='none')
+    if method_used == 'pca' and pca_var_ratio is not None:
+        plt.xlabel(f"Principal Component 1 ({pca_var_ratio[0]*100:.2f}% variance)")
+        plt.ylabel(f"Principal Component 2 ({pca_var_ratio[1]*100:.2f}% variance)")
+    elif method_used == 'umap':
+        plt.xlabel("UMAP Dimension 1")
+        plt.ylabel("UMAP Dimension 2")
+    else:
+        plt.xlabel("Component 1")
+        plt.ylabel("Component 2")
+    # Thesis-style subtle grid
+    plt.minorticks_on()
+    plt.grid(True, which='major', color='#d0d0d0', linestyle='--', linewidth=0.6, alpha=0.8)
+    plt.grid(True, which='minor', color='#f0f0f0', linestyle=':', linewidth=0.5, alpha=0.8)
+    # Legend: move to top-right, slightly lower, smaller font to avoid overlap
+    plt.legend(frameon=True,
+               loc='upper right',
+               bbox_to_anchor=(1.0, 0.97),
+               fontsize=8,
+               borderpad=0.4,
+               labelspacing=0.4,
+               handlelength=1.2,
+               handletextpad=0.6)
+    plt.tight_layout()
+    fig_path = os.path.join(out_dir, f"density_embedding_{method_used}.png")
+    plt.savefig(fig_path, dpi=220)
+    plt.close()
+    print(f"[EMBED] Saved embedding figure -> {fig_path}")
+
+    # CSV export
+    csv_path = os.path.join(out_dir, f"density_embedding_{method_used}.csv")
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["id", "label", "file", "comp1", "comp2"])
+        for i, (lbl, fp, (c1, c2)) in enumerate(zip(labels, file_list, emb)):
+            writer.writerow([i, lbl, str(fp), f"{c1:.6g}", f"{c2:.6g}"])
+    print(f"[EMBED] Saved embedding CSV -> {csv_path}")
+
+    # Log
+    with open(log_path, 'w') as f:
+        f.write("Density Embedding Log\n")
+        f.write(f"method={method_used}\n")
+        f.write(f"fully_gen_root={fully_gen_root}\n")
+        f.write(f"semi_gen_root={semi_gen_root}\n")
+        f.write(f"fully_gt_root={fully_gt_root}\n")
+        f.write(f"semi_gt_root={semi_gt_root}\n")
+        f.write(f"samples_fully={len(X_fully)}\n")
+        f.write(f"samples_gt={len(X_gt)}\n")
+        f.write(f"samples_semi={len(X_semi)}\n")
+        f.write(f"target_shape={target_shape}\n")
+        f.write(f"stride={stride}\n")
+        f.write(f"standardize={standardize}\n")
+        f.write(f"umap_requested={use_umap}\n")
+        f.write(f"umap_neighbors={umap_neighbors}\n")
+        f.write(f"umap_min_dist={umap_min_dist}\n")
+        f.write(f"seed={seed}\n")
+    print(f"[EMBED] Log written -> {log_path}")
 
 
 def main():
@@ -505,7 +982,7 @@ def main():
         setattr(args, 'no_clean', (not CONFIG.get('clean', True)))
         print("[INFO] Running with internal CONFIG (edit CONFIG dict near top of file).")
     else:
-        p = argparse.ArgumentParser(description="Compare VTU field with NPZ field.")
+        p = argparse.ArgumentParser(description="Compare VTU field with NPZ field or create density embeddings (mode=embed).")
         p.add_argument("--vtu", default=None)
         p.add_argument("--vtu-field", default=None)
         p.add_argument("--npz", default=None)
@@ -514,7 +991,7 @@ def main():
         p.add_argument("--mapping", choices=["auto","npz","vtu"], default=None, help="How to build NPZ grid: use NPZ coords, VTU bounds, or auto-detect")
         p.add_argument("--npz-y-origin", choices=["top","bottom"], default=None, help="Treat NPZ row 0 as 'top' (image) or 'bottom' (math)")
         p.add_argument("--outside-value", type=float, default=None, help="Value to assign outside the VTU mesh domain on the grid (default 0)")
-        p.add_argument("--mode", choices=["auto","single","batch"], default=None, help="Run a single case, batch over roots, or auto-detect")
+        p.add_argument("--mode", choices=["auto","single","batch","embed"], default=None, help="Run comparison (single/batch/auto) or density embedding (embed)")
         p.add_argument("--no-clean", action="store_true", help="Do not delete existing output folder(s) before writing")
         # Batch mode options
         p.add_argument("--vtu-root", default=None, help="Root folder to search for VTU cases (recursively, looking for flow.vtu)")
@@ -526,6 +1003,19 @@ def main():
         p.add_argument("--line-y", type=float, default=None, help="Physical y-value for horizontal line extraction (closest row is used)")
         p.add_argument("--line-normalize", action="store_true", help="Normalize line values by max of NPZ line (for comparative plotting)")
         p.add_argument("--density-normalize-mode", choices=["max","mean"], default=None, help="When density normalization enabled: choose reference as max or mean (ignored if explicit ref configured)")
+        # Embedding options (mode=embed)
+        p.add_argument("--fully-gen-root", default=None, help="Root for fully-conditioned DDPM generated NPZ sweep")
+        p.add_argument("--semi-gen-root", default=None, help="Root for semi-conditioned DDPM generated NPZ sweep")
+        p.add_argument("--fully-gt-root", default=None, help="Root for ground truth fully NPZs")
+        p.add_argument("--semi-gt-root", default=None, help="Root for ground truth semi NPZs")
+        p.add_argument("--embed-out", default=None, help="Output directory for embedding results")
+        p.add_argument("--embed-max-per-group", type=int, default=None, help="Maximum samples per group (after GT merge)")
+        p.add_argument("--embed-stride", type=int, default=None, help="Spatial stride (downsample) for density arrays")
+        p.add_argument("--embed-no-standardize", action="store_true", help="Disable per-feature standardization prior to embedding")
+        p.add_argument("--embed-pca", action="store_true", help="Force PCA even if UMAP is available")
+        p.add_argument("--umap-neighbors", type=int, default=None, help="UMAP n_neighbors")
+        p.add_argument("--umap-min-dist", type=float, default=None, help="UMAP min_dist")
+        p.add_argument("--embed-seed", type=int, default=None, help="Random seed for subsampling & embedding")
         args = p.parse_args()
 
     vtu = getattr(args,'vtu',None) or DEFAULT_VTU
@@ -560,7 +1050,7 @@ def main():
     line_y = getattr(args,'line_y',None)
     line_norm = bool(getattr(args,'line_normalize',False))
 
-    def run_one(vtu_path: str, npz_path: str, outdir: str) -> Tuple[float, float, float]:
+    def run_one(vtu_path: str, npz_path: str, outdir: str) -> Tuple[float, float, float, float, int, float, float, int, float]:
         # Load VTU first for bounds
         pts, vals, vtu_key = extract_vtu_field(vtu_path, vtu_field)
         xmin, xmax = float(np.nanmin(pts[:,0])), float(np.nanmax(pts[:,0]))
@@ -614,9 +1104,31 @@ def main():
         else:
             plot_field_label_npz = npz_field
 
+        # Pre-compute batch-aggregatable stats before plotting
+        diff = Z_vtu - Z_npz
+        # Valid means finite after operations
+        valid_mask = np.isfinite(diff)
+        n_valid = int(np.count_nonzero(valid_mask))
+        sse = float(np.nansum(diff[valid_mask] ** 2)) if n_valid > 0 else float('nan')
+        sum_npz_sq = float(np.nansum((Z_npz[valid_mask]) ** 2)) if n_valid > 0 else float('nan')
+
+        # Mean Relative Error (percentage), robust to small denominators
+        mre_eps = float(CONFIG.get('mre_ref_eps', 1e-12)) if 'CONFIG' in globals() else 1e-12
+        denom = np.abs(Z_npz)
+        mre_mask = valid_mask & (denom > mre_eps)
+        n_mre = int(np.count_nonzero(mre_mask))
+        if n_mre > 0:
+            rel_abs = np.abs(diff[mre_mask]) / denom[mre_mask]
+            sum_rel_abs = float(np.nansum(rel_abs))
+            mre_pct = float(100.0 * (sum_rel_abs / n_mre))
+        else:
+            sum_rel_abs = float('nan')
+            mre_pct = float('nan')
+
         mse, rel_mse, rmse_pct = plots(outdir, X, Y, Z_npz, Z_vtu, npz_field, vtu_key)
         # Optional line extraction
         try:
+            mach_number = _extract_mach_from_text(vtu_path, npz_path, outdir)
             extract_line_profile(
                 outdir,
                 X,
@@ -627,12 +1139,151 @@ def main():
                 y_value=line_y,
                 normalize=line_norm,
                 field_label=plot_field_label_npz,
+                mach_number=mach_number,
+                style_like_sample=True,
             )
         except Exception as e:
             print(f"[LINE][WARN] Could not extract line profile: {e}")
-        return mse, rel_mse, rmse_pct
 
-    # Resolve roots with defaults (batch mode)
+        # Also create line plots for Temperature and Mach (using same row/params)
+        def _make_field_line(npz_key: str, vtu_pref: str, pretty_label: str):
+            try:
+                pts_f, vals_f, _ = extract_vtu_field(vtu_path, vtu_pref)
+                xmin_f, xmax_f = float(np.nanmin(pts_f[:,0])), float(np.nanmax(pts_f[:,0]))
+                ymin_f, ymax_f = float(np.nanmin(pts_f[:,1])), float(np.nanmax(pts_f[:,1]))
+                Z_npz_f, Xf, Yf = load_npz_grid(
+                    npz_path,
+                    npz_key,
+                    mapping_mode=mapping_mode,
+                    vtu_bounds=(xmin_f, xmax_f, ymin_f, ymax_f),
+                    npz_y_origin=npz_y_origin,
+                )
+                tri_f = get_vtu_triangulation(vtu_path)
+                inside_mask_f = None
+                if tri_f is not None:
+                    finder_f = tri_f.get_trifinder()
+                    tri_ids_f = finder_f(Xf, Yf)
+                    inside_mask_f = tri_ids_f != -1
+                Z_vtu_f = interpolate_to_grid(pts_f, vals_f, Xf, Yf, inside_mask=inside_mask_f, outside_value=outside_value)
+                extract_line_profile(
+                    outdir,
+                    Xf,
+                    Yf,
+                    Z_npz_f,
+                    Z_vtu_f,
+                    row_index=line_row,
+                    y_value=line_y,
+                    normalize=line_norm,
+                    field_label=pretty_label,
+                    mach_number=mach_number,
+                    style_like_sample=True,
+                )
+            except Exception as _e:
+                print(f"[LINE][WARN] Skipping line plot for field '{pretty_label}': {_e}")
+
+        _make_field_line('temperature', 'Temperature', 'temperature')
+        _make_field_line('mach', 'Mach', 'mach')
+        return mse, rel_mse, rmse_pct, mre_pct, n_valid, sse, sum_npz_sq, n_mre, sum_rel_abs
+
+    def compute_field_metrics(vtu_path: str, npz_path: str, npz_key: str, vtu_preference: str) -> Tuple[float, float, float, float, int, float, float, int, float]:
+        """Compute metrics for a given field without plotting.
+
+        Returns: (mse, rel_mse, rmse_pct, mre_pct, n_valid, sse, sum_npz_sq, n_mre, sum_rel_abs)
+        """
+        try:
+            pts_f, vals_f, vtu_key_f = extract_vtu_field(vtu_path, vtu_preference)
+        except Exception as e:
+            print(f"[WARN] VTU field '{vtu_preference}' not found for {os.path.basename(vtu_path)}: {e}")
+            return (float('nan'),) * 9
+        # Use same bounds logic as run_one
+        xmin_f, xmax_f = float(np.nanmin(pts_f[:,0])), float(np.nanmax(pts_f[:,0]))
+        ymin_f, ymax_f = float(np.nanmin(pts_f[:,1])), float(np.nanmax(pts_f[:,1]))
+        try:
+            Z_npz_f, Xf, Yf = load_npz_grid(
+                npz_path,
+                npz_key,
+                mapping_mode=mapping_mode,
+                vtu_bounds=(xmin_f, xmax_f, ymin_f, ymax_f),
+                npz_y_origin=npz_y_origin,
+            )
+        except Exception as e:
+            print(f"[WARN] NPZ field '{npz_key}' not found for {os.path.basename(npz_path)}: {e}")
+            return (float('nan'),) * 9
+        tri_f = get_vtu_triangulation(vtu_path)
+        inside_mask_f = None
+        if tri_f is not None:
+            finder_f = tri_f.get_trifinder()
+            tri_ids_f = finder_f(Xf, Yf)
+            inside_mask_f = tri_ids_f != -1
+        Z_vtu_f = interpolate_to_grid(pts_f, vals_f, Xf, Yf, inside_mask=inside_mask_f, outside_value=outside_value)
+
+        # Compute metrics (no normalization for non-density fields)
+        diff_f = Z_vtu_f - Z_npz_f
+        valid_f = np.isfinite(diff_f)
+        n_valid_f = int(np.count_nonzero(valid_f))
+        if n_valid_f > 0:
+            sse_f = float(np.nansum(diff_f[valid_f] ** 2))
+            sum_npz_sq_f = float(np.nansum((Z_npz_f[valid_f]) ** 2))
+            mse_f = float(sse_f / n_valid_f)
+        else:
+            sse_f = float('nan')
+            sum_npz_sq_f = float('nan')
+            mse_f = float('nan')
+        rmse_f = float(np.sqrt(mse_f)) if np.isfinite(mse_f) else float('nan')
+        npz_range_f = float(np.nanmax(Z_npz_f) - np.nanmin(Z_npz_f)) if np.isfinite(Z_npz_f).any() else float('nan')
+        rmse_pct_f = float(100.0 * rmse_f / npz_range_f) if (np.isfinite(npz_range_f) and npz_range_f > 0) else float('nan')
+        rel_mse_f = float(sse_f / sum_npz_sq_f) if (sum_npz_sq_f and np.isfinite(sse_f)) else float('nan')
+
+        # MRE%
+        mre_eps = float(CONFIG.get('mre_ref_eps', 1e-12)) if 'CONFIG' in globals() else 1e-12
+        denom_f = np.abs(Z_npz_f)
+        mre_mask_f = valid_f & (denom_f > mre_eps)
+        n_mre_f = int(np.count_nonzero(mre_mask_f))
+        if n_mre_f > 0:
+            rel_abs_f = np.abs(diff_f[mre_mask_f]) / denom_f[mre_mask_f]
+            sum_rel_abs_f = float(np.nansum(rel_abs_f))
+            mre_pct_f = float(100.0 * (sum_rel_abs_f / n_mre_f))
+        else:
+            sum_rel_abs_f = float('nan')
+            mre_pct_f = float('nan')
+
+        return mse_f, rel_mse_f, rmse_pct_f, mre_pct_f, n_valid_f, sse_f, sum_npz_sq_f, n_mre_f, sum_rel_abs_f
+
+    # Embedding mode branch (early return)
+    if mode == "embed":
+        fully_gen_root = getattr(args, 'fully_gen_root', None) or DEFAULT_FULLY_GEN_ROOT
+        semi_gen_root = getattr(args, 'semi_gen_root', None) or DEFAULT_SEMI_GEN_ROOT
+        fully_gt_root = getattr(args, 'fully_gt_root', None) or DEFAULT_FULLY_GT_ROOT
+        semi_gt_root = getattr(args, 'semi_gt_root', None) or DEFAULT_SEMI_GT_ROOT
+        embed_out = getattr(args, 'embed_out', None) or DEFAULT_EMBED_OUT
+        embed_max = getattr(args, 'embed_max_per_group', None) or DEFAULT_EMBED_MAX_PER_GROUP
+        embed_stride = getattr(args, 'embed_stride', None) or DEFAULT_EMBED_STRIDE
+        embed_standardize = not bool(getattr(args, 'embed_no_standardize', False)) if not USE_INTERNAL_CONFIG else CONFIG.get('embed_standardize', DEFAULT_EMBED_STANDARDIZE)
+        embed_use_umap = (not bool(getattr(args, 'embed_pca', False))) and (getattr(args, 'embed_use_umap', True) if hasattr(args,'embed_use_umap') else DEFAULT_EMBED_USE_UMAP)
+        umap_neighbors = getattr(args, 'umap_neighbors', None) or DEFAULT_UMAP_NEIGHBORS
+        umap_min_dist = getattr(args, 'umap_min_dist', None) or DEFAULT_UMAP_MIN_DIST
+        embed_seed = getattr(args, 'embed_seed', None) or DEFAULT_EMBED_SEED
+        print("[EMBED] Running density embedding pipeline ...")
+        run_density_embedding(
+            fully_gen_root=fully_gen_root,
+            semi_gen_root=semi_gen_root,
+            fully_gt_root=fully_gt_root,
+            semi_gt_root=semi_gt_root,
+            out_dir=embed_out,
+            max_per_group=embed_max,
+            stride=embed_stride,
+            standardize=embed_standardize,
+            use_umap=embed_use_umap,
+            umap_neighbors=umap_neighbors,
+            umap_min_dist=umap_min_dist,
+            seed=embed_seed,
+            npz_y_origin=npz_y_origin,
+            mapping_mode=mapping_mode,
+        )
+        print("[EMBED] Done.")
+        return
+
+    # Resolve roots with defaults (batch mode) for comparison functionality
     vtu_root = args.vtu_root or (DEFAULT_VTU_ROOT if os.path.isdir(DEFAULT_VTU_ROOT) else None)
     npz_root = args.npz_root or (DEFAULT_NPZ_ROOT if os.path.isdir(DEFAULT_NPZ_ROOT) else None)
 
@@ -664,7 +1315,7 @@ def main():
                     key = normalize_case_key(fname)
                     npz_map[key] = os.path.join(dirpath, fname)
 
-        results = []  # list of (case_key, vtu_path, npz_path, mse, rel_mse, rmse_pct)
+        results = []  # list of dicts per case with per-field metrics
         failures = []  # list of (case_key, vtu_path, npz_path_or_blank, reason)
         case_count = 0
         # Each immediate subdirectory of vtu_root is a case folder
@@ -695,10 +1346,53 @@ def main():
                 import shutil
                 shutil.rmtree(case_out)
             try:
-                mse, rel_mse, rmse_pct = run_one(vtu_path, npz_path, case_out)
-                results.append((key, vtu_path, npz_path, mse, rel_mse, rmse_pct))
+                # Primary field (density) with plots
+                mse, rel_mse, rmse_pct, mre_pct, n_valid, sse, sum_npz_sq, n_mre, sum_rel_abs = run_one(vtu_path, npz_path, case_out)
+                # Additional fields: temperature, mach (compute metrics only)
+                t_mse, t_rel_mse, t_rmse_pct, t_mre_pct, t_n_valid, t_sse, t_sum_npz_sq, t_n_mre, t_sum_rel_abs = compute_field_metrics(
+                    vtu_path, npz_path, 'temperature', 'Temperature'
+                )
+                m_mse, m_rel_mse, m_rmse_pct, m_mre_pct, m_n_valid, m_sse, m_sum_npz_sq, m_n_mre, m_sum_rel_abs = compute_field_metrics(
+                    vtu_path, npz_path, 'mach', 'Mach'
+                )
+                row = {
+                    'case_key': key,
+                    'vtu_path': vtu_path,
+                    'npz_path': npz_path,
+                    # density metrics (kept in legacy generic columns)
+                    'mse': mse,
+                    'rel_mse': rel_mse,
+                    'rmse_pct': rmse_pct,
+                    'mre_pct': mre_pct,
+                    'n_valid': n_valid,
+                    'sse': sse,
+                    'sum_npz_sq': sum_npz_sq,
+                    'n_mre': n_mre,
+                    'sum_rel_abs': sum_rel_abs,
+                    # temperature metrics
+                    'temperature_mse': t_mse,
+                    'temperature_rel_mse': t_rel_mse,
+                    'temperature_rmse_pct': t_rmse_pct,
+                    'temperature_mre_pct': t_mre_pct,
+                    'temperature_n_valid': t_n_valid,
+                    'temperature_sse': t_sse,
+                    'temperature_sum_npz_sq': t_sum_npz_sq,
+                    'temperature_n_mre': t_n_mre,
+                    'temperature_sum_rel_abs': t_sum_rel_abs,
+                    # mach metrics
+                    'mach_mse': m_mse,
+                    'mach_rel_mse': m_rel_mse,
+                    'mach_rmse_pct': m_rmse_pct,
+                    'mach_mre_pct': m_mre_pct,
+                    'mach_n_valid': m_n_valid,
+                    'mach_sse': m_sse,
+                    'mach_sum_npz_sq': m_sum_npz_sq,
+                    'mach_n_mre': m_n_mre,
+                    'mach_sum_rel_abs': m_sum_rel_abs,
+                }
+                results.append(row)
                 case_count += 1
-                print(f"[OK] {key}: MSE={mse:.6e}, relMSE={rel_mse:.6e}, RMSE%={rmse_pct:.3f}")
+                print(f"[OK] {key}: density MSE={mse:.6e}, relMSE={rel_mse:.6e}, RMSE%={rmse_pct:.3f}")
             except Exception as e:
                 print(f"[FAIL] {key}: {e}")
                 failures.append((key, vtu_path, npz_path, str(e)))
@@ -708,15 +1402,118 @@ def main():
         os.makedirs(os.path.dirname(summary_path), exist_ok=True)
         with open(summary_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['case_key', 'vtu_path', 'npz_path', 'npz_field', 'vtu_field', 'mapping', 'npz_y_origin', 'outside_value', 'mse', 'rel_mse', 'rmse_pct'])
-            for key, vtu_path, npz_path, mse, rel_mse, rmse_pct in results:
-                writer.writerow([key, vtu_path, npz_path, npz_field, vtu_field, mapping_mode, npz_y_origin, outside_value, f"{mse:.6e}", f"{rel_mse:.6e}", f"{rmse_pct:.3f}"])
+            header = [
+                'case_key', 'vtu_path', 'npz_path', 'npz_field', 'vtu_field', 'mapping', 'npz_y_origin', 'outside_value',
+                # density (legacy generic columns)
+                'mse', 'rel_mse', 'rmse_pct', 'mre_pct',
+                # temperature
+                'temperature_mse', 'temperature_rel_mse', 'temperature_rmse_pct', 'temperature_mre_pct',
+                # mach
+                'mach_mse', 'mach_rel_mse', 'mach_rmse_pct', 'mach_mre_pct',
+            ]
+            writer.writerow(header)
+            for row in results:
+                writer.writerow([
+                    row['case_key'], row['vtu_path'], row['npz_path'], npz_field, vtu_field, mapping_mode, npz_y_origin, outside_value,
+                    f"{row['mse']:.6e}", f"{row['rel_mse']:.6e}", f"{row['rmse_pct']:.3f}", f"{row['mre_pct']:.3f}",
+                    f"{row.get('temperature_mse', float('nan')):.6e}", f"{row.get('temperature_rel_mse', float('nan')):.6e}", f"{row.get('temperature_rmse_pct', float('nan')):.3f}", f"{row.get('temperature_mre_pct', float('nan')):.3f}",
+                    f"{row.get('mach_mse', float('nan')):.6e}", f"{row.get('mach_rel_mse', float('nan')):.6e}", f"{row.get('mach_rmse_pct', float('nan')):.3f}", f"{row.get('mach_mre_pct', float('nan')):.3f}",
+                ])
             # Append a summary section
             writer.writerow([])
             writer.writerow(['SUMMARY'])
             writer.writerow(['total_case_folders', total_case_dirs])
             writer.writerow(['successes', len(results)])
             writer.writerow(['failures', len(failures)])
+            # Batch-level aggregate errors (computed over successes only)
+            if results:
+                # Helper to compute aggregates per key prefix
+                def aggregates_for(prefix: str):
+                    mselist = np.array([row.get(f'{prefix}mse') for row in results], dtype=float)
+                    rel_mselist = np.array([row.get(f'{prefix}rel_mse') for row in results], dtype=float)
+                    rmsepct_list = np.array([row.get(f'{prefix}rmse_pct') for row in results], dtype=float)
+                    mre_pct_list = np.array([row.get(f'{prefix}mre_pct') for row in results], dtype=float)
+                    # Derive non-percent MRE list (divide by 100 where finite). This keeps legacy pct metrics while exposing raw ratio.
+                    with np.errstate(invalid='ignore', divide='ignore'):
+                        mre_list = mre_pct_list / 100.0
+                    n_valid_total = float(np.nansum([row.get(f'{prefix}n_valid', 0.0) for row in results]))
+                    sse_total = float(np.nansum([row.get(f'{prefix}sse', 0.0) for row in results]))
+                    sum_npz_sq_total = float(np.nansum([row.get(f'{prefix}sum_npz_sq', 0.0) for row in results]))
+                    n_mre_total = float(np.nansum([row.get(f'{prefix}n_mre', 0.0) for row in results]))
+                    sum_rel_abs_total = float(np.nansum([row.get(f'{prefix}sum_rel_abs', 0.0) for row in results]))
+                    macro_mse_mean = float(np.nanmean(mselist))
+                    macro_mse_median = float(np.nanmedian(mselist))
+                    macro_mse_std = float(np.nanstd(mselist))
+                    macro_rel_mse_mean = float(np.nanmean(rel_mselist))
+                    macro_rmse_pct_mean = float(np.nanmean(rmsepct_list))
+                    macro_mre_pct_mean = float(np.nanmean(mre_pct_list))
+                    macro_mre_mean = float(np.nanmean(mre_list))
+                    micro_mse = float(sse_total / n_valid_total) if n_valid_total and np.isfinite(sse_total) else float('nan')
+                    micro_rmse = float(np.sqrt(micro_mse)) if np.isfinite(micro_mse) else float('nan')
+                    micro_rel_mse = float(sse_total / sum_npz_sq_total) if sum_npz_sq_total and np.isfinite(sse_total) else float('nan')
+                    micro_mre_pct = float(100.0 * (sum_rel_abs_total / n_mre_total)) if n_mre_total and np.isfinite(sum_rel_abs_total) else float('nan')
+                    micro_mre = float(sum_rel_abs_total / n_mre_total) if n_mre_total and np.isfinite(sum_rel_abs_total) else float('nan')
+                    return dict(
+                        macro_mse_mean=macro_mse_mean,
+                        macro_mse_median=macro_mse_median,
+                        macro_mse_std=macro_mse_std,
+                        macro_rel_mse_mean=macro_rel_mse_mean,
+                        macro_rmse_pct_mean=macro_rmse_pct_mean,
+                        macro_mre_pct_mean=macro_mre_pct_mean,
+                        macro_mre_mean=macro_mre_mean,
+                        micro_mse=micro_mse,
+                        micro_rmse=micro_rmse,
+                        micro_rel_mse=micro_rel_mse,
+                        micro_mre=micro_mre,
+                        micro_mre_pct=micro_mre_pct,
+                    )
+
+                # Density keeps legacy names (no prefix)
+                agg_density = aggregates_for('')
+                agg_temp = aggregates_for('temperature_')
+                agg_mach = aggregates_for('mach_')
+
+                writer.writerow([])
+                writer.writerow(['BATCH ERROR METRICS'])
+                # Density (legacy labels)
+                writer.writerow(['macro_mse_mean', f"{agg_density['macro_mse_mean']:.6e}"])
+                writer.writerow(['macro_mse_median', f"{agg_density['macro_mse_median']:.6e}"])
+                writer.writerow(['macro_mse_std', f"{agg_density['macro_mse_std']:.6e}"])
+                writer.writerow(['macro_rel_mse_mean', f"{agg_density['macro_rel_mse_mean']:.6e}"])
+                writer.writerow(['macro_rmse_pct_mean', f"{agg_density['macro_rmse_pct_mean']:.3f}"])
+                writer.writerow(['macro_mre_mean', f"{agg_density['macro_mre_mean']:.6e}"])
+                writer.writerow(['macro_mre_pct_mean', f"{agg_density['macro_mre_pct_mean']:.3f}"])
+                writer.writerow(['micro_mse', f"{agg_density['micro_mse']:.6e}"])
+                writer.writerow(['micro_rmse', f"{agg_density['micro_rmse']:.6e}"])
+                writer.writerow(['micro_rel_mse', f"{agg_density['micro_rel_mse']:.6e}"])
+                writer.writerow(['micro_mre', f"{agg_density['micro_mre']:.6e}"])
+                writer.writerow(['micro_mre_pct', f"{agg_density['micro_mre_pct']:.3f}"])
+                # Temperature
+                writer.writerow(['macro_mse_mean_temperature', f"{agg_temp['macro_mse_mean']:.6e}"])
+                writer.writerow(['macro_mse_median_temperature', f"{agg_temp['macro_mse_median']:.6e}"])
+                writer.writerow(['macro_mse_std_temperature', f"{agg_temp['macro_mse_std']:.6e}"])
+                writer.writerow(['macro_rel_mse_mean_temperature', f"{agg_temp['macro_rel_mse_mean']:.6e}"])
+                writer.writerow(['macro_rmse_pct_mean_temperature', f"{agg_temp['macro_rmse_pct_mean']:.3f}"])
+                writer.writerow(['macro_mre_mean_temperature', f"{agg_temp['macro_mre_mean']:.6e}"])
+                writer.writerow(['macro_mre_pct_mean_temperature', f"{agg_temp['macro_mre_pct_mean']:.3f}"])
+                writer.writerow(['micro_mse_temperature', f"{agg_temp['micro_mse']:.6e}"])
+                writer.writerow(['micro_rmse_temperature', f"{agg_temp['micro_rmse']:.6e}"])
+                writer.writerow(['micro_rel_mse_temperature', f"{agg_temp['micro_rel_mse']:.6e}"])
+                writer.writerow(['micro_mre_temperature', f"{agg_temp['micro_mre']:.6e}"])
+                writer.writerow(['micro_mre_pct_temperature', f"{agg_temp['micro_mre_pct']:.3f}"])
+                # Mach
+                writer.writerow(['macro_mse_mean_mach', f"{agg_mach['macro_mse_mean']:.6e}"])
+                writer.writerow(['macro_mse_median_mach', f"{agg_mach['macro_mse_median']:.6e}"])
+                writer.writerow(['macro_mse_std_mach', f"{agg_mach['macro_mse_std']:.6e}"])
+                writer.writerow(['macro_rel_mse_mean_mach', f"{agg_mach['macro_rel_mse_mean']:.6e}"])
+                writer.writerow(['macro_rmse_pct_mean_mach', f"{agg_mach['macro_rmse_pct_mean']:.3f}"])
+                writer.writerow(['macro_mre_mean_mach', f"{agg_mach['macro_mre_mean']:.6e}"])
+                writer.writerow(['macro_mre_pct_mean_mach', f"{agg_mach['macro_mre_pct_mean']:.3f}"])
+                writer.writerow(['micro_mse_mach', f"{agg_mach['micro_mse']:.6e}"])
+                writer.writerow(['micro_rmse_mach', f"{agg_mach['micro_rmse']:.6e}"])
+                writer.writerow(['micro_rel_mse_mach', f"{agg_mach['micro_rel_mse']:.6e}"])
+                writer.writerow(['micro_mre_mach', f"{agg_mach['micro_mre']:.6e}"])
+                writer.writerow(['micro_mre_pct_mach', f"{agg_mach['micro_mre_pct']:.3f}"])
             # Append failed cases section (always, even if none)
             writer.writerow([])
             writer.writerow(['FAILED CASES'])
@@ -739,7 +1536,7 @@ def main():
     if clean and os.path.isdir(out):
         import shutil
         shutil.rmtree(out)
-    mse, rel_mse, rmse_pct = run_one(vtu, npz, out)
+    mse, rel_mse, rmse_pct, *_ = run_one(vtu, npz, out)
     print(f"Done. Wrote comparison to: {out}. MSE={mse:.6e}, relMSE={rel_mse:.6e}, RMSE%={rmse_pct:.3f}")
 
 

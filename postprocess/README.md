@@ -172,3 +172,61 @@ Behavior:
 Tips:
 - Use `--npz-y-origin top` (default) or `bottom` consistently when interpreting indices. Changing origin flips the vertical orientation before extraction.
 - For multiple profiles, you can run the script repeatedly or extend it to accept a comma-separated list (future enhancement).
+
+## Density Field Embedding (UMAP / PCA)
+
+Script: `postprocess/embedding_density.py`
+
+Create a 2D embedding (for visualization / qualitative comparison) of density fields coming from:
+- Fully-conditioned DDPM generated samples
+- Semi-conditioned DDPM generated samples
+- Ground Truth CFD (merged from two provided GT roots)
+
+Four directory roots are expected (recursively searched for `.npz`):
+1. Fully-conditioned DDPM generated sweep (`--fully-gen-root`)
+2. Semi-conditioned DDPM generated sweep (`--semi-gen-root`)
+3. Ground truth (fully) (`--fully-gt-root`)
+4. Ground truth (semi)  (`--semi-gt-root`)
+
+All ground-truth NPZs are merged under the single legend label "Ground Truth" so the figure shows three classes (matching the sample you shared).
+
+If `umap-learn` is installed, UMAP is used; otherwise a PCA (SVD) fallback is applied. You can force either with `--umap` or `--pca`.
+
+Example run:
+```bash
+python postprocess/embedding_density.py \
+   --fully-gen-root /Users/alperensevinc/Desktop/su2/su2_alp/DDPM_pipeline_results/fullyDDPM/backward/sweep \
+   --semi-gen-root  /Users/alperensevinc/Desktop/su2/su2_alp/DDPM_pipeline_results/semiDDPM/backward/sweep \
+   --fully-gt-root  double_ramp_configuration/inputs/denorm/DDPM_fully \
+   --semi-gt-root   double_ramp_configuration/inputs/denorm/DDPM_semi \
+   --out postprocess_outputs/density_embedding \
+   --max-per-group 400 \
+   --stride 2 \
+   --standardize
+```
+
+Important flags:
+- `--max-per-group N`   : cap number of NPZs per logical group before embedding (for speed)
+- `--stride S`          : simple spatial downsampling (pick every S-th point) before any resize
+- `--target-shape HxW`  : force all arrays to that shape (default = most common shape)
+- `--standardize`       : per-feature standardization (mean 0, std 1) prior to embedding
+- `--umap-neighbors K`  : UMAP neighbor parameter
+- `--umap-min-dist d`   : UMAP min_dist parameter
+- `--umap` / `--pca`    : force chosen method (UMAP errors if not installed)
+
+Outputs (under `--out`):
+- `density_embedding_<method>.png`  (scatter with legend: Fully-conditioned DDPM, Ground Truth, Semi-conditioned DDPM)
+- `density_embedding_<method>.csv`  (id,label,group,file,comp1,comp2)
+- `log.txt`                         (parameters & counts)
+
+Colors are fixed to match your reference figure:
+- Fully-conditioned DDPM: green (#2ca02c)
+- Ground Truth: blue (#1f77b4)
+- Semi-conditioned DDPM: orange (#ff7f0e)
+
+Install UMAP (optional but recommended):
+```bash
+conda install -c conda-forge umap-learn
+```
+
+If UMAP is not available the script prints a warning and falls back to PCA.

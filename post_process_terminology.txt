@@ -1,0 +1,41 @@
+those lines are batch-level summaries. Here’s what each metric means and how it’s computed.
+
+Per-case definitions (for case i):
+
+MSEi: mean squared error on the valid grid points.
+MSEi = (1/Ni) ∑j (vtuij − npzij)^2
+RMSEi: root mean squared error.
+RMSEi = sqrt(MSEi)
+Rel_MSEi: relative MSE using NPZ “energy” as reference.
+Rel_MSEi = MSEi / [(1/Ni) ∑j (npzij)^2]
+RMSE_pct_i: RMSE as a percent of the NPZ dynamic range for that case.
+RMSE_pct_i = 100 × RMSEi / (max(npzi) − min(npzi))
+All sums/means are over valid grid points (finite after interpolation and masking).
+
+Macro (unweighted, per-case average)
+
+macro_mse_mean: average of MSEi across cases.
+macro_mse_mean = mean_i(MSEi)
+macro_mse_median: median of MSEi across cases.
+macro_mse_median = median_i(MSEi)
+macro_mse_std: standard deviation of MSEi across cases.
+macro_mse_std = std_i(MSEi)
+macro_rel_mse_mean: average of Rel_MSEi across cases.
+macro_rel_mse_mean = mean_i(Rel_MSEi)
+macro_rmse_pct_mean: average of RMSE_pct_i across cases.
+macro_rmse_pct_mean = mean_i(RMSE_pct_i)
+
+Micro (weighted by number of grid points, across all cases) Let SSEi = ∑j (vtuij − npzij)^2, ENERGi = ∑j (npzij)^2, Ni = # valid points in case i. Then:
+
+micro_mse: global MSE over all points.
+micro_mse = (∑i SSEi) / (∑i Ni)
+micro_rmse: sqrt of micro_mse.
+micro_rmse = sqrt(micro_mse)
+micro_rel_mse: global relative MSE over all points.
+micro_rel_mse = (∑i SSEi) / (∑i ENERGi)
+How to interpret
+
+Macro = treats each case equally (good for “per-case” fairness). Median is robust to outliers; std shows spread.
+Micro = treats every grid point equally (good for “overall pixel/point” performance). If cases have different sizes, larger ones weigh more.
+It’s normal that macro_mse_mean ≈ micro_mse only when Ni are similar across cases. In your snippet they match, suggesting similar Ni or cancellation.
+macro_rmse_pct_mean (4.703) is the average per-case RMSE as a percent of each case’s NPZ range—unitless, intuitive for relative scale.

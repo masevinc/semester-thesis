@@ -1,0 +1,16 @@
+Density Embedding Log
+method=pca
+fully_gen_root=double_ramp_configuration/inputs/denorm/DDPM_fully
+semi_gen_root=double_ramp_configuration/inputs/denorm/DDPM_semi
+fully_gt_root=/Users/alperensevinc/Desktop/su2/su2_alp/DDPM_pipeline_results/fullyDDPM/backward/sweep
+semi_gt_root=/Users/alperensevinc/Desktop/su2/su2_alp/DDPM_pipeline_results/semiDDPM/backward/sweep
+samples_fully=16
+samples_gt=32
+samples_semi=16
+target_shape=(256, 256)
+stride=1
+standardize=True
+umap_requested=False
+umap_neighbors=15
+umap_min_dist=0.1
+seed=42

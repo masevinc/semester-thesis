@@ -161,8 +161,17 @@ def visualize_first_extracted_case(
         figsize = (base * aspect_ratio, base)
     fig, ax = plt.subplots(figsize=figsize, dpi=120)
     im = ax.imshow(field, cmap=cmap, origin='lower', extent=extent, aspect='equal')
-    cb = fig.colorbar(im, ax=ax, shrink=0.85, pad=0.02)
-    cb.ax.tick_params(labelsize=8)
+    # Colorbar can also trigger the same ABI ImportError; guard it.
+    cb = None
+    try:
+        cb = fig.colorbar(im, ax=ax, shrink=0.85, pad=0.02)
+        cb.ax.tick_params(labelsize=8)
+    except ImportError as e:
+        print(f"[evaluation_viz][warn] colorbar ImportError (continuing): {e}")
+    except Exception as e:
+        if os.environ.get('STRICT_VIZ_DEBUG'):
+            raise
+        print(f"[evaluation_viz][warn] colorbar unexpected error: {e.__class__.__name__}: {e}")
 
     if scaled_points.size > 0:
         pts = np.asarray(scaled_points)
@@ -196,12 +205,40 @@ def visualize_first_extracted_case(
         title_str = npz_name.replace('.npz','')
     ax.set_title(title_str, fontsize=10)
     ax.legend(loc='upper right', fontsize=7, frameon=True)
-    fig.tight_layout()
+    # --- Robust layout handling -------------------------------------------------
+    # Some environments (e.g., mismatched Matplotlib/NumPy builds) trigger ImportError
+    # deep inside tight_layout due to missing symbols (e.g., ERR_IGNORE). Guard it so
+    # visualization still proceeds and warn the user.
+    try:
+        fig.tight_layout()
+    except ImportError as e:
+        print(f"[evaluation_viz][warn] tight_layout ImportError (continuing): {e}")
+        try:
+            fig.subplots_adjust(left=0.10, right=0.97, top=0.90, bottom=0.12, wspace=0.25, hspace=0.30)
+        except Exception as e2:
+            print(f"[evaluation_viz][warn] subplots_adjust fallback failed: {e2.__class__.__name__}: {e2}")
+    except Exception as e:
+        if os.environ.get('STRICT_VIZ_DEBUG'):
+            raise
+        print(f"[evaluation_viz][warn] tight_layout unexpected error: {e.__class__.__name__}: {e}")
+        try:
+            fig.subplots_adjust(left=0.10, right=0.97, top=0.90, bottom=0.12, wspace=0.25, hspace=0.30)
+        except Exception as e2:
+            print(f"[evaluation_viz][warn] subplots_adjust (unexpected path) failed: {e2.__class__.__name__}: {e2}")
 
     png_path = os.path.join(output_dir, f"{figure_name}.png")
-    fig.savefig(png_path, dpi=150)
-    plt.close(fig)
-    print(f"[evaluation_viz] Saved evaluation figure: {png_path}")
+    # Saving may still trigger the ImportError; guard it too.
+    try:
+        fig.savefig(png_path, dpi=150)
+        print(f"[evaluation_viz] Saved evaluation figure: {png_path}")
+    except ImportError as e:
+        print(f"[evaluation_viz][warn] savefig ImportError (continuing without figure): {e}")
+    except Exception as e:
+        if os.environ.get('STRICT_VIZ_DEBUG'):
+            raise
+        print(f"[evaluation_viz][warn] savefig unexpected error: {e.__class__.__name__}: {e}")
+    finally:
+        plt.close(fig)
 
     # Also copy points (again) for convenient side-by-side reference.
     csv_path = os.path.join(output_dir, f"{figure_name}_points.csv")
@@ -233,6 +270,22 @@ def visualize_all_extracted_cases(
     *_{data_key}.npy file in points_dir. Each output image is named based on the
     original npz base name.
     """
+    # --- Early binary compatibility guard -------------------------------------
+    # Detect classic NumPy/Matplotlib mismatch (ImportError: ERR_IGNORE) *before*
+    # iterating all cases, so we fail fast with guidance rather than spamming.
+    if os.environ.get('SKIP_MPL_COMPAT_CHECK') != '1':
+        try:
+            # Matplotlib <-> NumPy ABI mismatch shows up when importing from umath
+            from numpy.core.umath import ERR_IGNORE  # type: ignore  # noqa: F401
+        except Exception as e:  # broad on purpose: could be ImportError or AttributeError
+            print("[evaluation_viz][fatal] Detected NumPy/Matplotlib binary mismatch (e.g., 'ERR_IGNORE' missing).")
+            print(f"[evaluation_viz][fatal] Underlying exception: {e.__class__.__name__}: {e}")
+            print("[evaluation_viz][hint] Activate the fixed environment (e.g., 'conda activate dramp') or align versions:")
+            print("[evaluation_viz][hint]   Option 1: conda install numpy=1.26.4 matplotlib=3.8.4")
+            print("[evaluation_viz][hint]   Option 2: conda install matplotlib>=3.9 (with NumPy 2.x)")
+            print("[evaluation_viz][hint] To bypass this check temporarily (not recommended), set SKIP_MPL_COMPAT_CHECK=1")
+            return
+
     if not os.path.isdir(points_dir):
         print(f"[evaluation_viz] Points directory does not exist: {points_dir}")
         return
@@ -290,6 +343,15 @@ def visualize_all_extracted_cases(
             figsize = (base * aspect_ratio, base)
         fig, ax = plt.subplots(figsize=figsize, dpi=120)
         ax.imshow(field, cmap=cmap, origin='lower', extent=extent, aspect='equal')
+        try:
+            cb = fig.colorbar(ax.images[0], ax=ax, shrink=0.85, pad=0.02)
+            cb.ax.tick_params(labelsize=8)
+        except ImportError as e:
+            print(f"[evaluation_viz][warn] colorbar ImportError for '{npz_name}' (continuing): {e}")
+        except Exception as e:
+            if os.environ.get('STRICT_VIZ_DEBUG'):
+                raise
+            print(f"[evaluation_viz][warn] colorbar unexpected error for '{npz_name}': {e.__class__.__name__}: {e}")
         if scaled_points.size > 0:
             pts = np.asarray(scaled_points)
             if pts.ndim == 2 and pts.shape[1] == 2:
@@ -315,11 +377,42 @@ def visualize_all_extracted_cases(
         else:
             title_str = npz_name.replace('.npz','')
         ax.set_title(title_str, fontsize=10)
-        fig.tight_layout()
+        # Layout robustness (see note above for single-case function)
+        try:
+            fig.tight_layout()
+        except ImportError as e:
+            print(f"[evaluation_viz][warn] tight_layout ImportError for '{npz_name}' (continuing): {e}")
+            try:
+                fig.subplots_adjust(left=0.10, right=0.97, top=0.90, bottom=0.12, wspace=0.25, hspace=0.30)
+            except Exception as e2:
+                print(f"[evaluation_viz][warn] subplots_adjust fallback failed for '{npz_name}': {e2.__class__.__name__}: {e2}")
+        except Exception as e:
+            if os.environ.get('STRICT_VIZ_DEBUG'):
+                raise
+            print(f"[evaluation_viz][warn] tight_layout unexpected error for '{npz_name}': {e.__class__.__name__}: {e}")
+            try:
+                fig.subplots_adjust(left=0.10, right=0.97, top=0.90, bottom=0.12, wspace=0.25, hspace=0.30)
+            except Exception as e2:
+                print(f"[evaluation_viz][warn] subplots_adjust (unexpected path) failed for '{npz_name}': {e2.__class__.__name__}: {e2}")
         base = os.path.splitext(pf)[0]
         png_path = os.path.join(output_dir, f"{base}.png")
-        fig.savefig(png_path, dpi=150)
-        plt.close(fig)
+        try:
+            if os.environ.get('STRICT_VIZ_DEBUG'):
+                print(f"[evaluation_viz][debug] Saving figure to {png_path}")
+            fig.savefig(png_path, dpi=150)
+        except ImportError as e:
+            print(f"[evaluation_viz][warn] savefig ImportError for '{npz_name}' (continuing): {e}")
+        except Exception as e:
+            if os.environ.get('STRICT_VIZ_DEBUG'):
+                raise
+            print(f"[evaluation_viz][warn] savefig unexpected error for '{npz_name}': {e.__class__.__name__}: {e}")
+        else:
+            if os.path.isfile(png_path):
+                print(f"[evaluation_viz] Saved overlay: {os.path.basename(png_path)}")
+            else:
+                print(f"[evaluation_viz][warn] savefig reported success but file missing: {png_path}")
+        finally:
+            plt.close(fig)
         # Points CSV copy
         csv_path = os.path.join(output_dir, f"{base}_points.csv")
         try:

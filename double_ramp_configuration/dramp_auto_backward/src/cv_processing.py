@@ -8,6 +8,7 @@ cv_processing.py
 
 import re
 import os
+import json
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
@@ -39,6 +40,7 @@ def _detect_ramp_start_point(contour):
         (x_plateau_end, plateau_y) for the SECOND point. plateau_y is the y of the left/top start.
         Returns None if a confident detection is not possible (fallback logic will be used).
     """
+    _primary_render_error = None
     try:
         pts = contour.reshape(-1, 2)
         # Identify leftmost x and gather plateau candidate y's within band
@@ -79,6 +81,92 @@ def _detect_ramp_start_point(contour):
     except Exception:
         return None
     return None
+
+
+# ---------------------------------------------------------------------------
+# Helper utilities (new) to generalize the workflow to arbitrary images
+# ---------------------------------------------------------------------------
+def load_image_as_rgb(path: str) -> np.ndarray:
+    """Load an image file (png/jpg) as RGB uint8 array.
+
+    Parameters
+    ----------
+    path : str
+        Image filepath.
+
+    Returns
+    -------
+    np.ndarray
+        (H,W,3) RGB image.
+    """
+    bgr = cv2.imread(path, cv2.IMREAD_COLOR)
+    if bgr is None:
+        raise FileNotFoundError(f"Could not read image file: {path}")
+    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+
+def generate_binary_mask(gray: np.ndarray, threshold_value: int = 40) -> tuple[np.ndarray, np.ndarray]:
+    """Generate raw and cleaned binary mask following project conventions.
+
+    Returns (binary_mask_raw, binary_mask_clean) where clean has ramp black (0) and flow white (255).
+    """
+    blurred = cv2.medianBlur(gray, 9)
+    _t, inv = cv2.threshold(blurred, threshold_value, 255, cv2.THRESH_BINARY_INV)
+    contours, _ = cv2.findContours(inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        raise RuntimeError("No contours found while generating binary mask.")
+    wedge_contour = max(contours, key=cv2.contourArea)
+    h, w = inv.shape
+    clean = np.full((h, w), 255, dtype=np.uint8)
+    cv2.drawContours(clean, [wedge_contour], -1, 0, -1)
+    return inv, clean
+
+
+def find_wedge_contour(binary_mask_raw: np.ndarray) -> np.ndarray:
+    """Return the largest contour from a raw inverted binary mask."""
+    contours, _ = cv2.findContours(binary_mask_raw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        raise RuntimeError("No contours found in provided mask")
+    return max(contours, key=cv2.contourArea)
+
+
+def process_image_file(
+    image_path: str,
+    physical_domain_height: float = 1.0,
+    physical_domain_width: float | None = None,
+    return_debug: bool = False,
+    save_debug_dir: str | None = None,
+    save_basename: str | None = None,
+    save_binary_mask: bool = False,
+    save_contour_overlay: bool = False,
+    json_output: str | None = None,
+):
+    """High-level convenience wrapper to process a normal image file.
+
+    Mirrors arguments of ``process_image_from_array``; loads image then delegates.
+    Optionally writes scaled points (and debug when requested) to a JSON file.
+    """
+    rgb = load_image_as_rgb(image_path)
+    result = process_image_from_array(
+        rgb,
+        physical_domain_height=physical_domain_height,
+        physical_domain_width=physical_domain_width,
+        return_debug=return_debug,
+        save_debug_dir=save_debug_dir,
+        save_basename=save_basename,
+        save_binary_mask=save_binary_mask,
+        save_contour_overlay=save_contour_overlay,
+    )
+    if json_output:
+        if return_debug:
+            scaled, dbg = result
+            payload = {"points": scaled, "debug": {k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in dbg.items() if k not in {"image_rgb"}}}
+        else:
+            scaled = result
+            payload = {"points": scaled}
+        with open(json_output, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+    return result
 
 
 def extract_metadata(filename):
@@ -142,28 +230,147 @@ def extract_image_from_array(npz_path, data_key, return_raw: bool = False):
     np.ndarray or (np.ndarray, np.ndarray)
         RGB image (H x W x 3, uint8) or tuple with raw scalar array.
     """
-    data = np.load(npz_path)
+    # NOTE: allow_pickle=True retained (legacy files may contain pickled python objects). We immediately
+    # validate & coerce; if security is a concern and you fully control data generation, set to False
+    # AFTER re-exporting all .npz with pure numeric arrays.
+    data = np.load(npz_path, allow_pickle=True)
     if data_key not in data:
-        raise KeyError(f"'{data_key}' not found. Available keys: {list(data.keys())}")
+        raise KeyError(f"'{data_key}' not found in {os.path.basename(npz_path)}. Available keys: {list(data.keys())}")
     array = data[data_key]
+
+    # --- Robust validation & auto-repair attempts --------------------------------------
+    # Historical user error reported: "object __array__ method not producing an array".
+    # This typically means an element inside an object-dtype ndarray defines __array__ but
+    # returns a non-array object, OR the top-level object itself is not a pure numeric array.
+    # We defensively coerce or raise with a VERY explicit diagnostic.
+    import numpy as _np
+    original_type = type(array)
+    original_dtype = getattr(array, 'dtype', None)
+
+    def _coerce_object_array(obj_arr):
+        """Attempt to coerce an object-dtype ndarray into a numeric 2D float array.
+
+        Strategies:
+          1. If elements are scalar-like (int/float/np.number) -> vectorized float cast.
+          2. If elements are 0-d ndarrays -> extract .item().
+          3. If elements are lists/tuples of length 1 -> take first element.
+        Returns coerced ndarray or raises ValueError.
+        """
+        flat = obj_arr.ravel()
+        cleaned = []
+        for el in flat:
+            # unwrap 0-d arrays
+            if isinstance(el, _np.ndarray) and el.shape == ():
+                el = el.item()
+            # unwrap length-1 containers
+            if isinstance(el, (list, tuple)) and len(el) == 1:
+                el = el[0]
+            if isinstance(el, (_np.integer, _np.floating, int, float)):
+                cleaned.append(float(el))
+            else:
+                raise ValueError(f"Encountered non-numeric element of type {type(el)} while coercing object array")
+        coerced = _np.array(cleaned, dtype=float).reshape(obj_arr.shape)
+        return coerced
+
+    try:
+        # Fast path: proper ndarray numeric & 2D
+        if isinstance(array, _np.ndarray) and original_dtype is not None and original_dtype is not object:
+            if array.ndim != 2:
+                raise ValueError(f"Array for key '{data_key}' in {os.path.basename(npz_path)} must be 2D, got shape {array.shape}")
+        else:
+            # Try to convert to ndarray (covers python lists, nested lists, masked arrays, etc.)
+            try:
+                array = _np.array(array)
+            except Exception as conv_err:
+                raise TypeError(f"Failed raw np.array() conversion for key '{data_key}' in {os.path.basename(npz_path)}: {conv_err}") from conv_err
+            if array.dtype == object:
+                # Extra guard: detect elements advertising __array__ incorrectly (common with mismatched library versions)
+                try:
+                    array = _coerce_object_array(array)
+                except Exception as coercion_err:
+                    sample_types = _np.unique([type(x).__name__ for x in array.ravel()[:25]])
+                    raise TypeError(
+                        "Object-dtype array for key '{k}' contains non-numeric elements after macOS / dependency update. "
+                        "Sample element types: {st}. Original file: {f}. Root: {r}".format(
+                            k=data_key, st=list(sample_types), f=os.path.basename(npz_path), r=coercion_err
+                        )
+                    ) from coercion_err
+            if array.ndim != 2:
+                raise ValueError(f"Coerced array for key '{data_key}' not 2D (shape {array.shape}) in {os.path.basename(npz_path)}")
+    except Exception as _e:
+        # Provide rich context and re-raise. Build message then raise (easier to read & avoids nesting quotes issues).
+        # Provide targeted remediation suggestions (esp. after OS / NumPy upgrades changing object model behavior)
+        msg = (
+            "Failed to obtain a clean 2D numeric array for key '{k}' in file '{f}'. "
+            "Original type={t}, original dtype={d}. Root cause: {err}. Suggestions: (1) Re-create the .npz with a current "
+            "NumPy version using plain numeric dtypes; (2) If you intentionally stored Python objects, refactor to store "
+            "their numeric payloads only; (3) Pin numpy/scipy versions that produced the original dataset to re-export."
+        ).format(k=data_key, f=os.path.basename(npz_path), t=original_type, d=original_dtype, err=_e)
+        raise TypeError(msg) from _e
 
     height, width = array.shape
     dpi = 100
     figsize = (width / dpi, height / dpi)
 
-    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
-    ax.imshow(array, cmap='viridis')
-    ax.axis('off')
-    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    # Some environments / backend combinations (especially after downgrading matplotlib or mixing wheels)
+    # can present a FigureCanvasAgg missing 'tostring_rgb'. We implement a robust, ordered fallback chain:
+    #  1. Normal matplotlib render using tostring_rgb (fast path)
+    #  2. If missing, try buffer_rgba() -> convert RGBA to RGB
+    #  3. If still failing, use figure.canvas.print_to_buffer()
+    #  4. Absolute fallback: bypass matplotlib entirely and manually map scalar field to viridis colormap.
 
-    canvas = FigureCanvas(fig)
-    canvas.draw()
+    image_np = None
+    try:
+        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        ax.imshow(array, cmap='viridis')
+        ax.axis('off')
+        fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        canvas = FigureCanvas(fig)
+        canvas.draw()
+        canvas_width, canvas_height = canvas.get_width_height()
+        if hasattr(canvas, 'tostring_rgb'):
+            raw = canvas.tostring_rgb()
+            image_np = np.frombuffer(raw, dtype='uint8').reshape((canvas_height, canvas_width, 3))
+        elif hasattr(canvas, 'buffer_rgba'):
+            buf = canvas.buffer_rgba()
+            rgba = np.asarray(buf, dtype=np.uint8).reshape((canvas_height, canvas_width, 4))
+            image_np = rgba[:, :, :3].copy()
+        else:
+            # Attempt print_to_buffer
+            if hasattr(canvas, 'print_to_buffer'):
+                raw, (w, h) = canvas.print_to_buffer()
+                image_np = np.frombuffer(raw, dtype='uint8').reshape((h, w, 4))[:, :, :3].copy()
+        plt.close(fig)
+    except Exception as render_err:
+        # Swallow and proceed to manual fallback
+        try:
+            plt.close(fig)
+        except Exception:
+            pass
+        _primary_render_error = render_err
+        image_np = None
 
-    # Get the real size of the canvas output - this avoids reshaping errors
-    canvas_width, canvas_height = canvas.get_width_height()
-    image_np = np.frombuffer(canvas.tostring_rgb(), dtype='uint8')
-    image_np = image_np.reshape((canvas_height, canvas_width, 3))
-    plt.close(fig)
+    if image_np is None:
+        # Manual fallback: colormap mapping without figure.
+        try:
+            from matplotlib import cm
+            arr = array.astype(np.float32)
+            finite_mask = np.isfinite(arr)
+            if not finite_mask.any():
+                raise ValueError("All values are non-finite; cannot colorize.")
+            vmin = float(arr[finite_mask].min())
+            vmax = float(arr[finite_mask].max())
+            if vmax == vmin:
+                vmax = vmin + 1e-9
+            normed = (arr - vmin) / (vmax - vmin)
+            normed = np.clip(normed, 0.0, 1.0)
+            vir = cm.get_cmap('viridis')
+            rgba = vir(normed)  # (H, W, 4) float
+            image_np = (rgba[:, :, :3] * 255).astype(np.uint8)
+        except Exception as fallback_err:
+            raise RuntimeError(
+                f"Failed all rendering paths for key '{data_key}' in {os.path.basename(npz_path)}: primary={_primary_render_error}, manual={fallback_err}"
+            ) from fallback_err
 
     if return_raw:
         return image_np, array
@@ -225,7 +432,7 @@ def process_image_from_array(
     blurred = cv2.medianBlur(gray, 9) #was 11
 
     # --- Thresholding to create binary mask ---
-    threshold_value = 30  # Adjust as needed for your images
+    threshold_value = 40  # Adjust as needed for your images
     _, binary_mask_raw = cv2.threshold(blurred, threshold_value, 255, cv2.THRESH_BINARY_INV)
 
     # We want ramp BLACK (0) and flow WHITE (255).
@@ -439,4 +646,70 @@ def process_image_from_array(
             plain_path = os.path.join(save_debug_dir, f"{save_basename}_contour.png")
             cv2.imwrite(plain_path, _rescale_width(plain))
     return scaled_points, debug
+
+
+def _cli():  # pragma: no cover - lightweight manual utility
+    import argparse
+    p = argparse.ArgumentParser(description="Extract and scale wedge geometry points from image/npz.")
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--image", help="Path to ordinary image (png/jpg)")
+    src.add_argument("--npz", help="Path to .npz file to render")
+    p.add_argument("--key", help="Data key inside .npz (when using --npz)")
+    p.add_argument("--height", type=float, default=1.0, help="Physical domain height")
+    p.add_argument("--width", type=float, default=None, help="Physical domain width (if rectangular)")
+    p.add_argument("--debug", action="store_true", help="Return debug info and save when output paths given")
+    p.add_argument("--out-dir", help="Directory for debug image outputs")
+    p.add_argument("--basename", help="Basename for saved debug images (no extension)")
+    p.add_argument("--save-binary", action="store_true", help="Save binary mask PNG if debug dir provided")
+    p.add_argument("--save-overlay", action="store_true", help="Save contour overlay PNG if debug dir provided")
+    p.add_argument("--json", help="Write points (and debug) to JSON path")
+    args = p.parse_args()
+
+    if args.npz and not args.key:
+        p.error("--key is required when using --npz")
+
+    if args.image:
+        result = process_image_file(
+            args.image,
+            physical_domain_height=args.height,
+            physical_domain_width=args.width,
+            return_debug=args.debug,
+            save_debug_dir=args.out_dir,
+            save_basename=args.basename,
+            save_binary_mask=args.save_binary,
+            save_contour_overlay=args.save_overlay,
+            json_output=args.json,
+        )
+    else:  # npz path
+        rgb = extract_image_from_array(args.npz, args.key, return_raw=False)
+        result = process_image_from_array(
+            rgb,
+            physical_domain_height=args.height,
+            physical_domain_width=args.width,
+            return_debug=args.debug,
+            save_debug_dir=args.out_dir,
+            save_basename=args.basename,
+            save_binary_mask=args.save_binary,
+            save_contour_overlay=args.save_overlay,
+        )
+        if args.json:
+            if args.debug:
+                pts, dbg = result
+                payload = {"points": pts, "debug": {k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in dbg.items() if k != "image_rgb"}}
+            else:
+                payload = {"points": result}
+            with open(args.json, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+    # Simple print summary for CLI usage
+    if args.debug:
+        pts = result[0]
+    else:
+        pts = result
+    print("Scaled points (sorted):")
+    for i, (x, y) in enumerate(pts, 1):
+        print(f"  {i}: ({x:.6f}, {y:.6f})")
+
+
+if __name__ == "__main__":  # pragma: no cover
+    _cli()
 
