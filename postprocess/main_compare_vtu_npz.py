@@ -35,8 +35,8 @@ import random
 DEFAULT_MAPPING_MODE = "auto"  # 'auto' | 'npz' | 'vtu'
 DEFAULT_NPZ_Y_ORIGIN = "top"    # 'top' (image-style, like your main code) or 'bottom' (math-style)
 # for batch mode
-DEFAULT_VTU_ROOT = "/Users/alperensevinc/Desktop/su2/su2_alp/DDPM_pipeline_results/fullyDDPM/backward/sweep"
-DEFAULT_NPZ_ROOT = "double_ramp_configuration/inputs/denorm/DDPM_fully"
+DEFAULT_VTU_ROOT = 'double_ramp_configuration/outputs/backward/sweep'#"/Users/alperensevinc/Desktop/su2/su2_alp/DDPM_pipeline_results/fullyDDPM/backward/sweep"
+DEFAULT_NPZ_ROOT = 'double_ramp_configuration/inputs/double_ramp_npz_files_clamped'#"double_ramp_configuration/inputs/denorm/DDPM_fully"
 # for single mode
 DEFAULT_VTU = "double_ramp_configuration/outputs/backward/sweep/double_ramp_0p011_0p0488_ma_2p892_pres_199070_interpolated_arrays_density_M2p892_T300p0_P199070p0/flow.vtu"
 DEFAULT_NPZ = "double_ramp_configuration/inputs/double_ramp_npz_files_clamped/double_ramp_0.011_0.0488_ma_2.892_pres_199070_interpolated_arrays.npz"
@@ -472,7 +472,7 @@ def plots(outdir: str, X: np.ndarray, Y: np.ndarray, Z_npz: np.ndarray, Z_vtu: n
     # Combined subplot (1x3): NPZ | VTU | Diff
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5), constrained_layout=True)
     im0 = axes[0].imshow(Z_npz, origin='lower', aspect='equal', extent=extent, vmin=vmin_shared, vmax=vmax_shared, cmap='viridis')
-    axes[0].set_title("Fully DDPM Output: Density")
+    axes[0].set_title(f"Fully DDPM Output: {field_vtu}")
     im1 = axes[1].imshow(Z_vtu, origin='lower', aspect='equal', extent=extent, vmin=vmin_shared, vmax=vmax_shared, cmap='viridis')
     axes[1].set_title(f"Pipeline CFD: {field_vtu}")
     im2 = axes[2].imshow(diff, origin='lower', aspect='equal', extent=extent, vmin=-diff_abs, vmax=diff_abs, cmap='coolwarm')
@@ -550,14 +550,23 @@ def extract_line_profile(
         plt.plot(x_line, vtu_line, label="VTU", color="#ff7f0e", linewidth=1.1)
         plt.plot(x_line, npz_line, label="NPZ", color="#1f77b4", linewidth=1.4, linestyle="--")
     plt.xlabel("x-position (m)")
-    yl = f"{('Norm. ' if normalize else '')}Density (kg/m³)" if field_label else ("Norm. value" if normalize else "Value")
-    plt.ylabel(yl)
-    # Title: only field and Mach number
-    if mach_number is not None:
-        title = f"{field_label.capitalize()} (M={mach_number:.3f})"
+    # Y-axis label: special-case for Mach and Density
+    _lbl = (field_label or '').strip()
+    _lbl_lower = _lbl.lower()
+    # If label was passed like 'Norm. density', strip prefix for base-type detection
+    _base_lower = _lbl_lower
+    if _base_lower.startswith('norm.'):
+        _base_lower = _base_lower[5:].strip()
+    if _base_lower == 'mach':
+        yl = "Ma Number"
+    elif _base_lower in ('density', 'rho'):
+        yl = "Norm. Density" if normalize else "Density (kg / m³)"
+    elif _base_lower in ('temperature', 'temp', 't'):
+        yl = "Norm. Temperature" if normalize else "Temperature (K)"
     else:
-        title = f"{field_label.capitalize()}"
-    plt.title(title)
+        yl = f"{('Norm. ' if normalize else '')}{field_label}" if field_label else ("Norm. value" if normalize else "Value")
+    plt.ylabel(yl)
+    # No plot title for line plots per request
     plt.legend(frameon=True, loc='upper right')
     plt.tight_layout()
     plot_path = os.path.join(line_dir, f"{field_slug}_line_yindex_{j}_y_{y_sel:.6g}.png")

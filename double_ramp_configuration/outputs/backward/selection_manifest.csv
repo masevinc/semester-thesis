@@ -1,4 +1,7 @@
-# Selection manifest generated at UTC: 2025-10-04T09:02:14.693389
-# enable_random_sampling=True, sample_size=1, random_seed=11, total_matches=16, final_count=1
+# Selection manifest generated at UTC: 2025-10-06T15:11:19.158105
+# enable_random_sampling=False, sample_size=4, random_seed=11, total_matches=4, final_count=4
 # Columns: filename,ramp1,ramp2,ma,pres
-double_ramp_0.2_0.2_ma_2.284_pres_140453_interpolated_arrays.npz,0.2,0.2,2.284,140453
+double_ramp_0.0151_0.0131_ma_4.989_pres_110414_interpolated_arrays.npz,0.0151,0.0131,4.989,110414
+double_ramp_0.0355_0.0038_ma_5.177_pres_141574_interpolated_arrays.npz,0.0355,0.0038,5.177,141574
+double_ramp_0.0125_0.0085_ma_2.735_pres_155157_interpolated_arrays.npz,0.0125,0.0085,2.735,155157
+double_ramp_0.033_0.0238_ma_6.556_pres_147666_interpolated_arrays.npz,0.033,0.0238,6.556,147666

@@ -79,7 +79,9 @@ def visualize_first_extracted_case(
     cmap: str = 'viridis',
     flip_vertical: bool = True,
     margin_frac: float = 0.035,
-    point_size: float = 45.0
+    point_size: float = 45.0,
+    save_background: bool = True,
+    background_suffix: str = '_stage'
 ):
     """Generate a single evaluation visualization for the first available point file.
 
@@ -173,17 +175,6 @@ def visualize_first_extracted_case(
             raise
         print(f"[evaluation_viz][warn] colorbar unexpected error: {e.__class__.__name__}: {e}")
 
-    if scaled_points.size > 0:
-        pts = np.asarray(scaled_points)
-        if pts.ndim == 2 and pts.shape[1] == 2:
-            ax.scatter(pts[:, 0], pts[:, 1], c='red', s=point_size, edgecolors='white', linewidths=0.7, label='Extracted Points')
-            for i, (x, y) in enumerate(pts):
-                # offset scaled relative to smaller dimension for readability
-                offset = 0.012 * min(physical_height, physical_width)
-                ax.text(x + offset, y + offset, str(i + 1), color='white', fontsize=7, ha='left', va='bottom')
-        else:
-            print(f"[evaluation_viz] Unexpected points array shape: {pts.shape}")
-
     # Add small margin to make edge points easier to see
     margin = margin_frac * max(physical_height, physical_width)
     ax.set_xlim(-margin, physical_width + margin)
@@ -204,6 +195,49 @@ def visualize_first_extracted_case(
     else:
         title_str = npz_name.replace('.npz','')
     ax.set_title(title_str, fontsize=10)
+
+    # Optionally save a background-only image (no points/labels)
+    if save_background:
+        try:
+            fig.tight_layout()
+        except ImportError as e:
+            print(f"[evaluation_viz][warn] tight_layout ImportError (background, continuing): {e}")
+            try:
+                fig.subplots_adjust(left=0.10, right=0.97, top=0.90, bottom=0.12, wspace=0.25, hspace=0.30)
+            except Exception as e2:
+                print(f"[evaluation_viz][warn] subplots_adjust fallback failed (background): {e2.__class__.__name__}: {e2}")
+        except Exception as e:
+            if os.environ.get('STRICT_VIZ_DEBUG'):
+                raise
+            print(f"[evaluation_viz][warn] tight_layout unexpected error (background): {e.__class__.__name__}: {e}")
+            try:
+                fig.subplots_adjust(left=0.10, right=0.97, top=0.90, bottom=0.12, wspace=0.25, hspace=0.30)
+            except Exception as e2:
+                print(f"[evaluation_viz][warn] subplots_adjust (unexpected path) failed (background): {e2.__class__.__name__}: {e2}")
+        bg_png_path = os.path.join(output_dir, f"{figure_name}{background_suffix}.png")
+        try:
+            fig.savefig(bg_png_path, dpi=150)
+        except ImportError as e:
+            print(f"[evaluation_viz][warn] savefig ImportError (background, continuing): {e}")
+        except Exception as e:
+            if os.environ.get('STRICT_VIZ_DEBUG'):
+                raise
+            print(f"[evaluation_viz][warn] savefig unexpected error (background): {e.__class__.__name__}: {e}")
+        else:
+            print(f"[evaluation_viz] Saved background (no points): {bg_png_path}")
+
+    # Now overlay points and labels
+    if scaled_points.size > 0:
+        pts = np.asarray(scaled_points)
+        if pts.ndim == 2 and pts.shape[1] == 2:
+            ax.scatter(pts[:, 0], pts[:, 1], c='red', s=point_size, edgecolors='white', linewidths=0.7, label='Extracted Points')
+            for i, (x, y) in enumerate(pts):
+                # offset scaled relative to smaller dimension for readability
+                offset = 0.012 * min(physical_height, physical_width)
+                ax.text(x + offset, y + offset, str(i + 1), color='white', fontsize=7, ha='left', va='bottom')
+        else:
+            print(f"[evaluation_viz] Unexpected points array shape: {pts.shape}")
+
     ax.legend(loc='upper right', fontsize=7, frameon=True)
     # --- Robust layout handling -------------------------------------------------
     # Some environments (e.g., mismatched Matplotlib/NumPy builds) trigger ImportError
@@ -262,7 +296,9 @@ def visualize_all_extracted_cases(
     margin_frac: float = 0.035,
     point_size: float = 45.0,
     max_cases: int | None = None,
-    progress_every: int = 25
+    progress_every: int = 25,
+    save_background: bool = True,
+    background_suffix: str = '_stage'
 ):
     """Generate evaluation overlays for ALL extracted cases (or a limited subset).
 
@@ -329,11 +365,12 @@ def visualize_all_extracted_cases(
         if flip_vertical:
             field = np.flipud(field)
 
-            if physical_width is None:
-                pw = physical_height
-            else:
-                pw = physical_width
-            extent = [0.0, pw, 0.0, physical_height]
+        # Determine width and extent regardless of flip
+        if physical_width is None:
+            pw = physical_height
+        else:
+            pw = physical_width
+        extent = [0.0, pw, 0.0, physical_height]
 
         aspect_ratio = (pw / physical_height) if physical_height > 0 else 1.0
         base = 6.2
@@ -352,6 +389,35 @@ def visualize_all_extracted_cases(
             if os.environ.get('STRICT_VIZ_DEBUG'):
                 raise
             print(f"[evaluation_viz][warn] colorbar unexpected error for '{npz_name}': {e.__class__.__name__}: {e}")
+        # Save an optional background-only image before overlaying points
+        if save_background:
+            try:
+                fig.tight_layout()
+            except ImportError as e:
+                print(f"[evaluation_viz][warn] tight_layout ImportError (background '{npz_name}', continuing): {e}")
+                try:
+                    fig.subplots_adjust(left=0.10, right=0.97, top=0.90, bottom=0.12, wspace=0.25, hspace=0.30)
+                except Exception as e2:
+                    print(f"[evaluation_viz][warn] subplots_adjust fallback failed (background '{npz_name}'): {e2.__class__.__name__}: {e2}")
+            except Exception as e:
+                if os.environ.get('STRICT_VIZ_DEBUG'):
+                    raise
+                print(f"[evaluation_viz][warn] tight_layout unexpected error (background '{npz_name}'): {e.__class__.__name__}: {e}")
+                try:
+                    fig.subplots_adjust(left=0.10, right=0.97, top=0.90, bottom=0.12, wspace=0.25, hspace=0.30)
+                except Exception as e2:
+                    print(f"[evaluation_viz][warn] subplots_adjust (unexpected path) failed (background '{npz_name}'): {e2.__class__.__name__}: {e2}")
+            bg_base = os.path.splitext(pf)[0]
+            bg_png_path = os.path.join(output_dir, f"{bg_base}{background_suffix}.png")
+            try:
+                fig.savefig(bg_png_path, dpi=150)
+            except ImportError as e:
+                print(f"[evaluation_viz][warn] savefig ImportError (background '{npz_name}', continuing): {e}")
+            except Exception as e:
+                if os.environ.get('STRICT_VIZ_DEBUG'):
+                    raise
+                print(f"[evaluation_viz][warn] savefig unexpected error (background '{npz_name}'): {e.__class__.__name__}: {e}")
+
         if scaled_points.size > 0:
             pts = np.asarray(scaled_points)
             if pts.ndim == 2 and pts.shape[1] == 2:

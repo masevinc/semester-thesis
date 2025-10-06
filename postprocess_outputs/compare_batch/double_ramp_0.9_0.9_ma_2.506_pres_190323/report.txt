@@ -1,6 +1,0 @@
-NPZ field: density
-VTU field: Density
-MSE: 1.533670e-01
-RMSE: 3.916210e-01
-Relative MSE (mse/mean(npz^2)): 2.427064e-02
-RMSE % of NPZ range: 7.558%

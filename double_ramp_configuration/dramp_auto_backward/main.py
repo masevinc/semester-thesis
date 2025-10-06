@@ -98,14 +98,14 @@ except Exception as _e_dbg:
     except Exception as _e_dbg2:
         print("[debug] Could not load local cv_processing either:", _e_dbg2)
 
-USE_RANDOM = True    # Toggle this to enable/disable random sampling easily
+USE_RANDOM = False    # Toggle this to enable/disable random sampling easily
 DO_EVAL_VIZ = True   # If True: produce evaluation overlays after extraction
 VIZ_ALL_CASES = True # If True: visualize every extracted case; if False: only first
 MAX_VIZ_CASES = None # Optional int limit (e.g., 50) when VIZ_ALL_CASES True; None = no limit
 DO_MESH = True      # If True: proceed to mesh & sweep stage (requires gmsh). False = extraction + viz only
-SAMPLE_SIZE = 1     # Only used if USE_RANDOM=True (or legacy if left True with value)
+SAMPLE_SIZE = 4     # Only used if USE_RANDOM=True (or legacy if left True with value)
 RANDOM_SEED = 11
-MESH_FORMAT = 'su2'  # choose among: 'msh', 'su2', 'cgns'
+MESH_FORMAT = 'cgns'  # choose among: 'msh', 'su2', 'cgns'
 WRITE_LOCAL_SWEEP_SCRIPT = True  # new: create run_all_local.sh for sequential local execution
 
 # Mesh resolution controls (threaded through to mesh generator)
@@ -113,7 +113,7 @@ VERTICAL_NODES = 201
 HORIZONTAL_TARGET_NODES = 521  # total nodes along each top/bottom chain target (will be proportionally split)
 
 # --- Optional: Mesh convergence study toggle & parameters ---
-ENABLE_MESH_CONVERGENCE = True
+ENABLE_MESH_CONVERGENCE = False
 # Variations to try (you can also provide explicit pair list below)
 MESH_CONV_VERTICAL_LIST = [101, 151, 201, 301,401]
 MESH_CONV_HORIZONTAL_LIST = [321, 421, 521, 621,721]
@@ -122,12 +122,12 @@ MESH_CONV_EXPLICIT_PAIRS = None
 # Choose which extracted case to use; if None, first .npy in points dir is picked
 MESH_CONV_PREFERRED_POINTS = None  # e.g. "double_ramp_0p012_0p034_interpolated_arrays_density.npy"
 # Post-process sampling settings
-MESH_CONV_FIELD = 'density'
+MESH_CONV_FIELD = 'temperature'  # e.g., 'density', 'pressure', 'temperature'
 MESH_CONV_Y_VALUE = 0.20  # y=constant line to sample in physical units
 MESH_CONV_DO_GENERATE = False    # create meshes & cases
 MESH_CONV_DO_POST = True       # set True after runs finished to collect VTUs and plot overlay
 
-DATA_DIR = "./double_ramp_configuration/inputs/denorm/DDPM_semi"
+DATA_DIR = './double_ramp_configuration/inputs/npz_recons_input'#'./double_ramp_configuration/inputs/double_ramp_npz_files_clamped' #"./double_ramp_configuration/inputs/denorm/DDPM_semi"
 POINTS_DIR = "./double_ramp_configuration/outputs/backward/extracted_points"
 # --- Geometry scaling configuration ---
 # Legacy mode: domain treated as square (height == width == PHYSICAL_HEIGHT)
@@ -148,7 +148,7 @@ extract_points_batch(
     data_dir=DATA_DIR,
     output_dir=POINTS_DIR,
     filters={"ramp1": None, "ramp2": None, "min_ma": None, "max_ma": None},
-    selected_keys=["density"],
+    selected_keys=["temperature"],
     physical_height=_phys_height,
     physical_width=_phys_width,
     clear_output_before_run=True,
@@ -183,7 +183,7 @@ if DO_EVAL_VIZ:
             output_dir=viz_out_dir,
             physical_height=_phys_height,
             physical_width=_phys_width,
-            data_key="density",
+            data_key="temperature",
             max_cases=MAX_VIZ_CASES
         )
     else:
@@ -193,7 +193,7 @@ if DO_EVAL_VIZ:
             output_dir=viz_out_dir,
             physical_height=_phys_height,
             physical_width=_phys_width,
-            data_key="density",
+            data_key="temperature",
             figure_name="first_case_overlay"
         )
 
